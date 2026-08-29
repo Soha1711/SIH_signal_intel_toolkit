@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from signal_analysis import analyze_signal
+from param_estimation.signal_analysis import analyze_signal
 
 
 # ============================================================
