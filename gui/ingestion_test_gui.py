@@ -37,6 +37,8 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QGridLayout,
     QMessageBox,
+    QScrollArea,
+    QMainWindow,
 )
 
 from PyQt6.QtCore import Qt
@@ -114,6 +116,17 @@ class SignalIntelligenceGUI(QWidget):
         # Main layout
         # ----------------------------------------------------
 
+        # Scroll area to prevent label clipping
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
+        container = QWidget()
         main_layout = QVBoxLayout()
 
 
@@ -504,8 +517,20 @@ class SignalIntelligenceGUI(QWidget):
         # SET MAIN LAYOUT
         # ====================================================
 
-        self.setLayout(
+        container.setLayout(
             main_layout
+        )
+
+        scroll.setWidget(
+            container
+        )
+
+        outer_layout = QVBoxLayout()
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
+
+        self.setLayout(
+            outer_layout
         )
 
 
@@ -517,9 +542,11 @@ class SignalIntelligenceGUI(QWidget):
             "SIH Signal Intelligence Toolkit"
         )
 
+        self.setMinimumWidth(1050)
+
         self.resize(
-            1000,
-            750
+            1100,
+            800
         )
 
 
