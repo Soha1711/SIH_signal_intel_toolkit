@@ -5,6 +5,8 @@ Responsibilities:
 1. Time-domain I/Q waveform
 2. FFT / Magnitude Spectrum
 3. Power Spectral Density (PSD)
+4. Waterfall / Spectrogram
+5. Constellation Diagram
 
 Input:
     result["samples"]
@@ -15,7 +17,11 @@ Output:
 """
 
 import numpy as np
-from scipy.signal import welch
+from scipy.signal import welch, stft
+
+from param_estimation.modulation_classifier import (
+    detect_modulation_type,
+)
 
 
 # ============================================================
@@ -30,9 +36,6 @@ def compute_waveform(
 ):
     """
     Generate a readable time-domain I/Q waveform.
-
-    Only a small preview is selected for plotting so that
-    very large recordings do not appear as a dense block.
     """
 
     signal = np.asarray(signal)
@@ -45,7 +48,6 @@ def compute_waveform(
             "Sample rate must be greater than zero."
         )
 
-    # Number of samples to display
     preview_samples = int(
         preview_duration * sample_rate
     )
@@ -60,10 +62,8 @@ def compute_waveform(
         len(signal)
     )
 
-    # Take only the preview section
     preview = signal[:preview_samples]
 
-    # Reduce points if there are too many
     if len(preview) > max_points:
 
         step = int(
@@ -74,12 +74,9 @@ def compute_waveform(
 
         preview = preview[::step]
 
-    # Separate I and Q
     i_data = np.real(preview)
-
     q_data = np.imag(preview)
 
-    # Create time axis
     time = (
         np.arange(len(preview))
         / sample_rate
@@ -99,8 +96,6 @@ def compute_fft(
 ):
     """
     Compute normalized FFT magnitude spectrum.
-
-    A Hann window is applied to reduce spectral leakage.
     """
 
     signal = np.asarray(signal)
@@ -113,7 +108,6 @@ def compute_fft(
             "Sample rate must be greater than zero."
         )
 
-    # Limit FFT size for large recordings
     n = min(
         len(signal),
         max_samples
@@ -121,25 +115,21 @@ def compute_fft(
 
     fft_signal = signal[:n]
 
-    # Hann window
     window = np.hanning(n)
 
     windowed_signal = (
         fft_signal * window
     )
 
-    # Calculate FFT
     spectrum = np.fft.fft(
         windowed_signal
     )
 
-    # Frequency axis
     frequencies = np.fft.fftfreq(
         n,
         d=1.0 / sample_rate
     )
 
-    # Put zero frequency in the center
     spectrum = np.fft.fftshift(
         spectrum
     )
@@ -148,13 +138,11 @@ def compute_fft(
         frequencies
     )
 
-    # Normalize magnitude
     magnitude = (
         np.abs(spectrum)
         / np.sum(window)
     )
 
-    # Convert to dB
     magnitude_db = (
         20
         * np.log10(
@@ -174,7 +162,7 @@ def find_peak_frequency(
     magnitude_db
 ):
     """
-    Find the strongest frequency component.
+    Find strongest frequency component.
     """
 
     if len(frequencies) == 0:
@@ -219,13 +207,16 @@ def compute_psd(
             "Sample rate must be greater than zero."
         )
 
-    # Do not let segment size exceed signal length
     nperseg = min(
         nperseg,
         len(signal)
     )
 
-    # Welch PSD
+    if nperseg < 2:
+        raise ValueError(
+            "Signal is too short for PSD analysis."
+        )
+
     frequencies, psd = welch(
         signal,
         fs=sample_rate,
@@ -234,7 +225,6 @@ def compute_psd(
         scaling="density"
     )
 
-    # Center zero frequency
     frequencies = np.fft.fftshift(
         frequencies
     )
@@ -243,7 +233,6 @@ def compute_psd(
         psd
     )
 
-    # Convert to dB/Hz
     psd_db = (
         10
         * np.log10(
@@ -255,7 +244,130 @@ def compute_psd(
 
 
 # ============================================================
-# 5. COMPLETE ANALYSIS
+# 5. WATERFALL / SPECTROGRAM
+# ============================================================
+
+def compute_waterfall(
+    signal,
+    sample_rate,
+    nperseg=1024,
+    noverlap=768
+):
+    """
+    Compute time-frequency waterfall data.
+
+    Returns:
+        frequencies : frequency axis in Hz
+        times       : time axis in seconds
+        power_db    : power in dB
+    """
+
+    signal = np.asarray(signal)
+
+    if signal.size == 0:
+        raise ValueError("Signal is empty.")
+
+    if sample_rate <= 0:
+        raise ValueError(
+            "Sample rate must be greater than zero."
+        )
+
+    nperseg = min(
+        nperseg,
+        len(signal)
+    )
+
+    if nperseg < 2:
+        raise ValueError(
+            "Signal is too short for waterfall analysis."
+        )
+
+    noverlap = min(
+        noverlap,
+        nperseg - 1
+    )
+
+    frequencies, times, spectrum = stft(
+        signal,
+        fs=sample_rate,
+        window="hann",
+        nperseg=nperseg,
+        noverlap=noverlap,
+        return_onesided=False,
+        boundary=None,
+        padded=False
+    )
+
+    # Shift zero frequency to center
+    frequencies = np.fft.fftshift(
+        frequencies
+    )
+
+    spectrum = np.fft.fftshift(
+        spectrum,
+        axes=0
+    )
+
+    # Power
+    power = np.abs(
+        spectrum
+    ) ** 2
+
+    # Convert to dB
+    power_db = (
+        10
+        * np.log10(
+            power + 1e-12
+        )
+    )
+
+    return (
+        frequencies,
+        times,
+        power_db
+    )
+
+
+# ============================================================
+# 6. CONSTELLATION
+# ============================================================
+
+def compute_constellation(
+    signal,
+    max_points=10000
+):
+    """
+    Extract I/Q samples for constellation diagram.
+    """
+
+    signal = np.asarray(signal)
+
+    if signal.size == 0:
+        raise ValueError("Signal is empty.")
+
+    # Limit points for GUI performance
+    if len(signal) > max_points:
+
+        indices = np.linspace(
+            0,
+            len(signal) - 1,
+            max_points,
+            dtype=int
+        )
+
+        signal = signal[indices]
+
+    i_data = np.real(signal)
+    q_data = np.imag(signal)
+
+    return (
+        i_data,
+        q_data
+    )
+
+
+# ============================================================
+# 7. COMPLETE ANALYSIS
 # ============================================================
 
 def analyze_signal(
@@ -263,27 +375,29 @@ def analyze_signal(
     preview_duration=0.001,
     max_waveform_points=50000,
     max_fft_samples=262144,
-    psd_nperseg=4096
+    psd_nperseg=4096,
+    waterfall_nperseg=1024,
+    waterfall_noverlap=768,
+    max_constellation_points=10000
 ):
     """
-    Perform waveform, FFT and PSD analysis.
+    Perform complete signal analysis.
 
-    The input dictionary is preserved and extended.
-
-    Required input keys:
-
-        result["samples"]
-        result["sample_rate"]
+    Analysis:
+        1. Waveform
+        2. FFT
+        3. Peak frequency
+        4. PSD
+        5. Waterfall
+        6. Constellation
     """
 
-    # Make a copy so that we don't unexpectedly modify
-    # the original dictionary.
     output = dict(result)
 
     try:
 
         # ----------------------------------------------------
-        # Check required data
+        # CHECK INPUT
         # ----------------------------------------------------
 
         if "samples" not in output:
@@ -297,7 +411,7 @@ def analyze_signal(
             )
 
         # ----------------------------------------------------
-        # Get signal and sample rate
+        # GET SIGNAL
         # ----------------------------------------------------
 
         signal = np.asarray(
@@ -308,9 +422,9 @@ def analyze_signal(
             output["sample_rate"]
         )
 
-        # ====================================================
+        # ----------------------------------------------------
         # WAVEFORM
-        # ====================================================
+        # ----------------------------------------------------
 
         (
             waveform_time,
@@ -323,9 +437,9 @@ def analyze_signal(
             max_points=max_waveform_points
         )
 
-        # ====================================================
+        # ----------------------------------------------------
         # FFT
-        # ====================================================
+        # ----------------------------------------------------
 
         (
             fft_frequency,
@@ -336,18 +450,18 @@ def analyze_signal(
             max_samples=max_fft_samples
         )
 
-        # ====================================================
+        # ----------------------------------------------------
         # PEAK FREQUENCY
-        # ====================================================
+        # ----------------------------------------------------
 
         peak_frequency = find_peak_frequency(
             fft_frequency,
             fft_magnitude_db
         )
 
-        # ====================================================
+        # ----------------------------------------------------
         # PSD
-        # ====================================================
+        # ----------------------------------------------------
 
         (
             psd_frequency,
@@ -358,17 +472,64 @@ def analyze_signal(
             nperseg=psd_nperseg
         )
 
+        # ----------------------------------------------------
+        # WATERFALL
+        # ----------------------------------------------------
+
+        (
+            waterfall_frequency,
+            waterfall_time,
+            waterfall_power_db
+        ) = compute_waterfall(
+            signal,
+            sample_rate,
+            nperseg=waterfall_nperseg,
+            noverlap=waterfall_noverlap
+        )
+
+        # ----------------------------------------------------
+        # CONSTELLATION
+        # ----------------------------------------------------
+
+        (
+            constellation_i,
+            constellation_q
+        ) = compute_constellation(
+            signal,
+            max_points=max_constellation_points
+        )
+
+        # ----------------------------------------------------
+        # MODULATION TYPE DETECTION
+        # ----------------------------------------------------
+
+        (
+            detected_modulation,
+            modulation_confidence
+        ) = detect_modulation_type(
+            constellation_i,
+            constellation_q
+        )
+
         # ====================================================
         # SAVE RESULTS
         # ====================================================
 
-        output["waveform_time"] = waveform_time
+        output["waveform_time"] = (
+            waveform_time
+        )
 
-        output["waveform_i"] = waveform_i
+        output["waveform_i"] = (
+            waveform_i
+        )
 
-        output["waveform_q"] = waveform_q
+        output["waveform_q"] = (
+            waveform_q
+        )
 
-        output["fft_frequency"] = fft_frequency
+        output["fft_frequency"] = (
+            fft_frequency
+        )
 
         output["fft_magnitude_db"] = (
             fft_magnitude_db
@@ -382,13 +543,59 @@ def analyze_signal(
             psd_frequency
         )
 
-        output["psd_db"] = psd_db
+        output["psd_db"] = (
+            psd_db
+        )
 
-        output["analysis_status"] = "success"
+        # ----------------------------------------------------
+        # WATERFALL RESULTS
+        # ----------------------------------------------------
+
+        output["waterfall_frequency"] = (
+            waterfall_frequency
+        )
+
+        output["waterfall_time"] = (
+            waterfall_time
+        )
+
+        output["waterfall_power_db"] = (
+            waterfall_power_db
+        )
+
+        # ----------------------------------------------------
+        # CONSTELLATION RESULTS
+        # ----------------------------------------------------
+
+        output["constellation_i"] = (
+            constellation_i
+        )
+
+        output["constellation_q"] = (
+            constellation_q
+        )
+
+        # ----------------------------------------------------
+        # MODULATION DETECTION RESULTS
+        # ----------------------------------------------------
+
+        output["detected_modulation"] = (
+            detected_modulation
+        )
+
+        output["modulation_confidence"] = (
+            modulation_confidence
+        )
+
+        output["analysis_status"] = (
+            "success"
+        )
 
     except Exception as error:
 
-        output["analysis_status"] = "failed"
+        output["analysis_status"] = (
+            "failed"
+        )
 
         output["error"] = str(error)
 
