@@ -1,51 +1,142 @@
 """
 SIH 2026 - Signal Intelligence Toolkit
+Main PyQt6 Dashboard
 
-Main GUI for:
-    1. IQ / WAV file selection
-    2. Signal ingestion
-    3. Signal information display
-    4. Waveform analysis
-    5. FFT analysis
-    6. PSD analysis
-
-The ingestion module is responsible for reading IQ/WAV files.
-
-The signal analysis module receives:
-    result["samples"]
-    result["sample_rate"]
-
-and generates:
-    Waveform
-    FFT
-    PSD
+Features:
+1. IQ / WAV file selection
+2. Signal ingestion
+3. Signal information
+4. Waveform
+5. FFT
+6. PSD
+7. Waterfall
+8. Constellation
+9. Signal parameter extraction
+10. Export CSV / JSON
 """
 
 import sys
+import csv
+import json
 from pathlib import Path
+
+import numpy as np
 
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QGroupBox,
     QLabel,
     QPushButton,
     QFileDialog,
     QDoubleSpinBox,
     QComboBox,
-    QGridLayout,
     QMessageBox,
     QScrollArea,
-    QMainWindow,
 )
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QEvent
 
 
 # ============================================================
-# MAKE PROJECT ROOT AVAILABLE
+# SMOOTH SCROLL AREA (mouse wheel + touchpad + keyboard)
+# ============================================================
+
+class SmoothScrollArea(QScrollArea):
+    """
+    QScrollArea with full scroll support:
+      - Mouse wheel
+      - Laptop touchpad (smooth / pixel-delta scrolling)
+      - Keyboard: Up/Down/PageUp/PageDown/Home/End
+    Works even when child widgets (e.g. matplotlib canvases) would
+    normally consume the wheel event themselves.
+    """
+
+    KEY_STEP  = 40    # px per arrow-key press
+    PAGE_STEP = 300   # px per Page Up / Page Down
+
+    # ----------------------------------------------------------
+    # Setup
+    # ----------------------------------------------------------
+
+    def setWidget(self, widget):
+        """Install event filter recursively whenever a widget is set."""
+        super().setWidget(widget)
+        self._install_filter(widget)
+
+    def _install_filter(self, widget):
+        """Recursively install this scroll area as an event filter on
+        every descendant so that wheel events are never swallowed."""
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.installEventFilter(self)
+
+    # ----------------------------------------------------------
+    # Event filter — catches wheel events on ANY child widget
+    # ----------------------------------------------------------
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel:
+            self._do_scroll(event)
+            return True          # consume – don't let the child handle it
+        return super().eventFilter(obj, event)
+
+    # ----------------------------------------------------------
+    # Wheel event on the scroll area itself
+    # ----------------------------------------------------------
+
+    def wheelEvent(self, event):
+        self._do_scroll(event)
+        event.accept()
+
+    # ----------------------------------------------------------
+    # Core scroll logic (handles both mouse wheel & touchpad)
+    # ----------------------------------------------------------
+
+    def _do_scroll(self, event):
+        bar = self.verticalScrollBar()
+
+        # Touchpad sends pixelDelta (precise pixel amounts)
+        pixel_delta = event.pixelDelta().y()
+        if pixel_delta != 0:
+            bar.setValue(bar.value() - pixel_delta)
+            return
+
+        # Mouse wheel sends angleDelta (multiples of 120)
+        angle_delta = event.angleDelta().y()
+        if angle_delta != 0:
+            # 120 units == one notch == ~3 lines (~60 px)
+            bar.setValue(bar.value() - int(angle_delta / 120 * 60))
+
+    # ----------------------------------------------------------
+    # Keyboard scrolling
+    # ----------------------------------------------------------
+
+    def keyPressEvent(self, event):
+        bar = self.verticalScrollBar()
+        key = event.key()
+
+        if key == Qt.Key.Key_Up:
+            bar.setValue(bar.value() - self.KEY_STEP)
+        elif key == Qt.Key.Key_Down:
+            bar.setValue(bar.value() + self.KEY_STEP)
+        elif key == Qt.Key.Key_PageUp:
+            bar.setValue(bar.value() - self.PAGE_STEP)
+        elif key == Qt.Key.Key_PageDown:
+            bar.setValue(bar.value() + self.PAGE_STEP)
+        elif key == Qt.Key.Key_Home:
+            bar.setValue(bar.minimum())
+        elif key == Qt.Key.Key_End:
+            bar.setValue(bar.maximum())
+        else:
+            super().keyPressEvent(event)
+
+
+# ============================================================
+# PROJECT ROOT
 # ============================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -55,28 +146,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 # ============================================================
-# IMPORT TEAM INGESTION MODULE
+# PROJECT MODULES
 # ============================================================
 
 from ingestion.iq_wav_reader import load_signal_file
-
-
-# ============================================================
-# IMPORT SIGNAL ANALYSIS MODULE
-# ============================================================
-
 from param_estimation.signal_analysis import analyze_signal
-
-
-# ============================================================
-# IMPORT GUI GRAPH WIDGET
-# ============================================================
-
 from gui.signal_analysis_widget import SignalAnalysisWidget
 
 
 # ============================================================
-# MAIN WINDOW
+# MAIN GUI
 # ============================================================
 
 class SignalIntelligenceGUI(QWidget):
@@ -86,7 +165,7 @@ class SignalIntelligenceGUI(QWidget):
         super().__init__()
 
         # ----------------------------------------------------
-        # Store current signal information
+        # Current data
         # ----------------------------------------------------
 
         self.current_signal = None
@@ -94,40 +173,37 @@ class SignalIntelligenceGUI(QWidget):
         self.current_filepath = None
 
         # ----------------------------------------------------
-        # Create signal analysis widget
+        # Analysis widget
         # ----------------------------------------------------
 
         self.analysis_widget = SignalAnalysisWidget()
 
         # ----------------------------------------------------
-        # Setup GUI
+        # Create GUI
         # ----------------------------------------------------
 
         self.setup_ui()
 
 
     # ========================================================
-    # SETUP USER INTERFACE
+    # SETUP UI
     # ========================================================
 
     def setup_ui(self):
 
         # ----------------------------------------------------
-        # Main layout
+        # Scroll area
         # ----------------------------------------------------
 
-        # Scroll area to prevent label clipping
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-        scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
+        scroll.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         container = QWidget()
+
         main_layout = QVBoxLayout()
+
+        main_layout.setSpacing(12)
 
 
         # ====================================================
@@ -145,9 +221,9 @@ class SignalIntelligenceGUI(QWidget):
         title.setStyleSheet(
             """
             QLabel {
-                font-size: 22px;
+                font-size: 26px;
                 font-weight: bold;
-                padding: 12px;
+                padding: 15px;
             }
             """
         )
@@ -156,7 +232,7 @@ class SignalIntelligenceGUI(QWidget):
 
 
         # ====================================================
-        # SIGNAL INPUT GROUP
+        # SIGNAL INPUT
         # ====================================================
 
         input_group = QGroupBox(
@@ -165,23 +241,11 @@ class SignalIntelligenceGUI(QWidget):
 
         input_layout = QHBoxLayout()
 
-
-        # ----------------------------------------------------
-        # File path label
-        # ----------------------------------------------------
-
         self.file_path_label = QLabel(
             "No file selected"
         )
 
-        self.file_path_label.setWordWrap(
-            True
-        )
-
-
-        # ----------------------------------------------------
-        # Browse button
-        # ----------------------------------------------------
+        self.file_path_label.setWordWrap(True)
 
         self.browse_button = QPushButton(
             "Browse..."
@@ -190,7 +254,6 @@ class SignalIntelligenceGUI(QWidget):
         self.browse_button.clicked.connect(
             self.browse_file
         )
-
 
         input_layout.addWidget(
             self.file_path_label,
@@ -225,8 +288,10 @@ class SignalIntelligenceGUI(QWidget):
         # Sample rate
         # ----------------------------------------------------
 
-        sample_rate_label = QLabel(
-            "Sample Rate:"
+        iq_layout.addWidget(
+            QLabel("Sample Rate:"),
+            0,
+            0
         )
 
         self.sample_rate_input = QDoubleSpinBox()
@@ -248,13 +313,6 @@ class SignalIntelligenceGUI(QWidget):
             " Hz"
         )
 
-
-        iq_layout.addWidget(
-            sample_rate_label,
-            0,
-            0
-        )
-
         iq_layout.addWidget(
             self.sample_rate_input,
             0,
@@ -266,8 +324,10 @@ class SignalIntelligenceGUI(QWidget):
         # Data type
         # ----------------------------------------------------
 
-        data_type_label = QLabel(
-            "Data Type:"
+        iq_layout.addWidget(
+            QLabel("Data Type:"),
+            1,
+            0
         )
 
         self.data_type_combo = QComboBox()
@@ -283,16 +343,8 @@ class SignalIntelligenceGUI(QWidget):
             ]
         )
 
-        # Raw IQ test data generated as float32
         self.data_type_combo.setCurrentText(
             "float32"
-        )
-
-
-        iq_layout.addWidget(
-            data_type_label,
-            1,
-            0
         )
 
         iq_layout.addWidget(
@@ -300,7 +352,6 @@ class SignalIntelligenceGUI(QWidget):
             1,
             1
         )
-
 
         iq_group.setLayout(
             iq_layout
@@ -312,7 +363,7 @@ class SignalIntelligenceGUI(QWidget):
 
 
         # ====================================================
-        # LOAD SIGNAL BUTTON
+        # LOAD SIGNAL
         # ====================================================
 
         self.load_button = QPushButton(
@@ -321,6 +372,15 @@ class SignalIntelligenceGUI(QWidget):
 
         self.load_button.setMinimumHeight(
             45
+        )
+
+        self.load_button.setStyleSheet(
+            """
+            QPushButton {
+                font-size: 16px;
+                font-weight: bold;
+            }
+            """
         )
 
         self.load_button.clicked.connect(
@@ -343,19 +403,14 @@ class SignalIntelligenceGUI(QWidget):
         information_layout = QGridLayout()
 
 
-        # ----------------------------------------------------
         # Format
-        # ----------------------------------------------------
-
         information_layout.addWidget(
             QLabel("Format:"),
             0,
             0
         )
 
-        self.format_value = QLabel(
-            "-"
-        )
+        self.format_value = QLabel("-")
 
         information_layout.addWidget(
             self.format_value,
@@ -364,19 +419,14 @@ class SignalIntelligenceGUI(QWidget):
         )
 
 
-        # ----------------------------------------------------
         # Sample rate
-        # ----------------------------------------------------
-
         information_layout.addWidget(
             QLabel("Sample Rate:"),
             1,
             0
         )
 
-        self.info_sample_rate = QLabel(
-            "-"
-        )
+        self.info_sample_rate = QLabel("-")
 
         information_layout.addWidget(
             self.info_sample_rate,
@@ -385,19 +435,14 @@ class SignalIntelligenceGUI(QWidget):
         )
 
 
-        # ----------------------------------------------------
-        # Number of samples
-        # ----------------------------------------------------
-
+        # Samples
         information_layout.addWidget(
             QLabel("Number of Samples:"),
             2,
             0
         )
 
-        self.info_num_samples = QLabel(
-            "-"
-        )
+        self.info_num_samples = QLabel("-")
 
         information_layout.addWidget(
             self.info_num_samples,
@@ -406,19 +451,14 @@ class SignalIntelligenceGUI(QWidget):
         )
 
 
-        # ----------------------------------------------------
         # Duration
-        # ----------------------------------------------------
-
         information_layout.addWidget(
             QLabel("Duration:"),
             3,
             0
         )
 
-        self.info_duration = QLabel(
-            "-"
-        )
+        self.info_duration = QLabel("-")
 
         information_layout.addWidget(
             self.info_duration,
@@ -427,19 +467,14 @@ class SignalIntelligenceGUI(QWidget):
         )
 
 
-        # ----------------------------------------------------
         # Data type
-        # ----------------------------------------------------
-
         information_layout.addWidget(
             QLabel("Data Type:"),
             4,
             0
         )
 
-        self.info_data_type = QLabel(
-            "-"
-        )
+        self.info_data_type = QLabel("-")
 
         information_layout.addWidget(
             self.info_data_type,
@@ -448,19 +483,14 @@ class SignalIntelligenceGUI(QWidget):
         )
 
 
-        # ----------------------------------------------------
         # Channels
-        # ----------------------------------------------------
-
         information_layout.addWidget(
             QLabel("Channels:"),
             5,
             0
         )
 
-        self.info_channels = QLabel(
-            "-"
-        )
+        self.info_channels = QLabel("-")
 
         information_layout.addWidget(
             self.info_channels,
@@ -479,15 +509,152 @@ class SignalIntelligenceGUI(QWidget):
 
 
         # ====================================================
+        # SIGNAL PARAMETERS
+        # ====================================================
+
+        parameter_group = QGroupBox(
+            "Signal Parameters"
+        )
+
+        parameter_layout = QGridLayout()
+
+
+        # ----------------------------------------------------
+        # Peak frequency
+        # ----------------------------------------------------
+
+        parameter_layout.addWidget(
+            QLabel("Peak Frequency:"),
+            0,
+            0
+        )
+
+        self.peak_frequency_value = QLabel(
+            "-"
+        )
+
+        self.peak_frequency_value.setStyleSheet(
+            "font-weight: bold;"
+        )
+
+        parameter_layout.addWidget(
+            self.peak_frequency_value,
+            0,
+            1
+        )
+
+
+        # ----------------------------------------------------
+        # Bandwidth
+        # ----------------------------------------------------
+
+        parameter_layout.addWidget(
+            QLabel("Bandwidth:"),
+            1,
+            0
+        )
+
+        self.bandwidth_value = QLabel(
+            "-"
+        )
+
+        self.bandwidth_value.setStyleSheet(
+            "font-weight: bold;"
+        )
+
+        parameter_layout.addWidget(
+            self.bandwidth_value,
+            1,
+            1
+        )
+
+
+        # ----------------------------------------------------
+        # SNR
+        # ----------------------------------------------------
+
+        parameter_layout.addWidget(
+            QLabel("SNR:"),
+            2,
+            0
+        )
+
+        self.snr_value = QLabel(
+            "-"
+        )
+
+        self.snr_value.setStyleSheet(
+            "font-weight: bold;"
+        )
+
+        parameter_layout.addWidget(
+            self.snr_value,
+            2,
+            1
+        )
+
+
+        # ----------------------------------------------------
+        # Modulation
+        # ----------------------------------------------------
+
+        parameter_layout.addWidget(
+            QLabel("Modulation:"),
+            3,
+            0
+        )
+
+        self.modulation_value = QLabel(
+            "-"
+        )
+
+        self.modulation_value.setStyleSheet(
+            "font-weight: bold;"
+        )
+
+        parameter_layout.addWidget(
+            self.modulation_value,
+            3,
+            1
+        )
+
+
+        # ----------------------------------------------------
+        # Confidence
+        # ----------------------------------------------------
+
+        parameter_layout.addWidget(
+            QLabel("Confidence:"),
+            4,
+            0
+        )
+
+        self.confidence_value = QLabel(
+            "-"
+        )
+
+        parameter_layout.addWidget(
+            self.confidence_value,
+            4,
+            1
+        )
+
+
+        parameter_group.setLayout(
+            parameter_layout
+        )
+
+        main_layout.addWidget(
+            parameter_group
+        )
+
+
+        # ====================================================
         # STATUS
         # ====================================================
 
         self.status_label = QLabel(
             "Status: Ready"
-        )
-
-        self.status_label.setWordWrap(
-            True
         )
 
         self.status_label.setStyleSheet(
@@ -505,7 +672,7 @@ class SignalIntelligenceGUI(QWidget):
 
 
         # ====================================================
-        # SIGNAL ANALYSIS SECTION
+        # SIGNAL ANALYSIS
         # ====================================================
 
         main_layout.addWidget(
@@ -514,7 +681,66 @@ class SignalIntelligenceGUI(QWidget):
 
 
         # ====================================================
-        # SET MAIN LAYOUT
+        # EXPORT SECTION
+        # ====================================================
+
+        export_group = QGroupBox(
+            "Export Results"
+        )
+
+        export_layout = QHBoxLayout()
+
+
+        self.export_csv_button = QPushButton(
+            "Export CSV"
+        )
+
+        self.export_json_button = QPushButton(
+            "Export JSON"
+        )
+
+        self.export_png_button = QPushButton(
+            "Save Plot"
+        )
+
+
+        self.export_csv_button.clicked.connect(
+            self.export_csv
+        )
+
+        self.export_json_button.clicked.connect(
+            self.export_json
+        )
+
+        self.export_png_button.clicked.connect(
+            self.export_plot
+        )
+
+
+        export_layout.addWidget(
+            self.export_csv_button
+        )
+
+        export_layout.addWidget(
+            self.export_json_button
+        )
+
+        export_layout.addWidget(
+            self.export_png_button
+        )
+
+
+        export_group.setLayout(
+            export_layout
+        )
+
+        main_layout.addWidget(
+            export_group
+        )
+
+
+        # ====================================================
+        # CONTAINER
         # ====================================================
 
         container.setLayout(
@@ -525,9 +751,19 @@ class SignalIntelligenceGUI(QWidget):
             container
         )
 
+
         outer_layout = QVBoxLayout()
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.addWidget(scroll)
+
+        outer_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0
+        )
+
+        outer_layout.addWidget(
+            scroll
+        )
 
         self.setLayout(
             outer_layout
@@ -535,18 +771,16 @@ class SignalIntelligenceGUI(QWidget):
 
 
         # ====================================================
-        # WINDOW SETTINGS
+        # WINDOW
         # ====================================================
 
         self.setWindowTitle(
             "SIH Signal Intelligence Toolkit"
         )
 
-        self.setMinimumWidth(1050)
-
         self.resize(
-            1100,
-            800
+            1200,
+            900
         )
 
 
@@ -566,38 +800,17 @@ class SignalIntelligenceGUI(QWidget):
             "All Files (*)"
         )
 
-
-        # ----------------------------------------------------
-        # Check whether user selected a file
-        # ----------------------------------------------------
-
         if not file_path:
             return
 
-
-        # ----------------------------------------------------
-        # Save selected file path
-        # ----------------------------------------------------
-
         self.current_filepath = file_path
-
-
-        # ----------------------------------------------------
-        # Display file path
-        # ----------------------------------------------------
 
         self.file_path_label.setText(
             file_path
         )
 
-
-        # ----------------------------------------------------
-        # Update status
-        # ----------------------------------------------------
-
         self.status_label.setText(
-            "Status: File selected. "
-            "Click LOAD SIGNAL."
+            "Status: File selected. Click LOAD SIGNAL."
         )
 
 
@@ -606,10 +819,6 @@ class SignalIntelligenceGUI(QWidget):
     # ========================================================
 
     def load_signal(self):
-
-        # ----------------------------------------------------
-        # Check file selection
-        # ----------------------------------------------------
 
         if not self.current_filepath:
 
@@ -622,12 +831,8 @@ class SignalIntelligenceGUI(QWidget):
             return
 
 
-        # ----------------------------------------------------
-        # Update status
-        # ----------------------------------------------------
-
         self.status_label.setText(
-            "Status: Loading signal..."
+            "Status: Loading and analyzing signal..."
         )
 
         QApplication.processEvents()
@@ -635,52 +840,27 @@ class SignalIntelligenceGUI(QWidget):
 
         try:
 
-            # =================================================
-            # GET SAMPLE RATE FROM GUI
-            # =================================================
+            # ------------------------------------------------
+            # Sample rate
+            # ------------------------------------------------
 
             sample_rate = float(
                 self.sample_rate_input.value()
             )
 
 
-            # -------------------------------------------------
-            # Check sample rate
-            # -------------------------------------------------
-
-            if sample_rate <= 0:
-
-                raise ValueError(
-                    "Sample rate must be greater than 0 Hz."
-                )
-
-
-            # =================================================
-            # GET DATA TYPE FROM GUI
-            # =================================================
+            # ------------------------------------------------
+            # Data type
+            # ------------------------------------------------
 
             iq_dtype = (
                 self.data_type_combo.currentText()
             )
 
 
-            # =================================================
-            # LOAD USING TEAM INGESTION MODULE
-            # =================================================
-            #
-            # IMPORTANT:
-            #
-            # Raw .iq files do NOT contain sample-rate
-            # information inside the file.
-            #
-            # Therefore we explicitly pass:
-            #
-            #     sample_rate
-            #     iq_dtype
-            #
-            # to the ingestion module.
-            #
-            # =================================================
+            # ------------------------------------------------
+            # Load file
+            # ------------------------------------------------
 
             result = load_signal_file(
                 self.current_filepath,
@@ -689,69 +869,50 @@ class SignalIntelligenceGUI(QWidget):
             )
 
 
-            # -------------------------------------------------
-            # Check ingestion result
-            # -------------------------------------------------
-
             if result is None:
-
                 raise ValueError(
                     "Signal loader returned no result."
                 )
 
 
-            # -------------------------------------------------
-            # Check required keys
-            # -------------------------------------------------
-
             if "samples" not in result:
-
                 raise KeyError(
-                    "Signal loader result does not "
-                    "contain 'samples'."
+                    "Loader result does not contain samples."
                 )
 
 
             if "sample_rate" not in result:
-
                 raise KeyError(
-                    "Signal loader result does not "
-                    "contain 'sample_rate'."
+                    "Loader result does not contain sample_rate."
                 )
 
 
-            # =================================================
-            # SAVE INGESTION RESULT
-            # =================================================
+            # ------------------------------------------------
+            # Save signal
+            # ------------------------------------------------
 
-            self.current_result = result
-
-            self.current_signal = (
+            self.current_signal = np.asarray(
                 result["samples"]
             )
 
 
-            # =================================================
-            # DISPLAY SIGNAL INFORMATION
-            # =================================================
+            # ------------------------------------------------
+            # Signal information
+            # ------------------------------------------------
 
             self.display_signal_information(
-                self.current_result
+                result
             )
 
 
-            # =================================================
-            # RUN SIGNAL ANALYSIS
-            # =================================================
+            # ------------------------------------------------
+            # Full signal analysis
+            # ------------------------------------------------
 
             self.current_result = analyze_signal(
-                self.current_result
+                result
             )
 
-
-            # =================================================
-            # CHECK ANALYSIS RESULT
-            # =================================================
 
             if (
                 self.current_result.get(
@@ -761,67 +922,54 @@ class SignalIntelligenceGUI(QWidget):
             ):
 
                 raise ValueError(
-                    "Signal analysis failed: "
-                    +
-                    str(
-                        self.current_result.get(
-                            "error",
-                            "Unknown error"
-                        )
+                    self.current_result.get(
+                        "error",
+                        "Signal analysis failed."
                     )
                 )
 
 
-            # =================================================
-            # DISPLAY WAVEFORM / FFT / PSD
-            # =================================================
+            # ------------------------------------------------
+            # Display graphs
+            # ------------------------------------------------
 
             self.analysis_widget.display_analysis(
                 self.current_result
             )
 
 
-            # =================================================
-            # SUCCESS STATUS
-            # =================================================
+            # ------------------------------------------------
+            # Display parameters
+            # ------------------------------------------------
+
+            self.display_parameters(
+                self.current_result
+            )
+
+
+            # ------------------------------------------------
+            # Success
+            # ------------------------------------------------
 
             self.status_label.setText(
-                "Status: ✓ Signal loaded and "
-                "analyzed successfully."
+                "Status: ✓ Signal loaded and analyzed successfully."
             )
 
 
         except Exception as error:
 
-            # -------------------------------------------------
-            # Clear old signal
-            # -------------------------------------------------
-
             self.current_signal = None
-
             self.current_result = None
-
-
-            # -------------------------------------------------
-            # Clear graphs
-            # -------------------------------------------------
 
             self.analysis_widget.clear_plots()
 
-
-            # -------------------------------------------------
-            # Display error
-            # -------------------------------------------------
-
             self.status_label.setText(
-                "Status: ✗ Error - "
-                + str(error)
+                "Status: ✗ Error - " + str(error)
             )
-
 
             QMessageBox.critical(
                 self,
-                "Signal Loading / Analysis Error",
+                "Signal Analysis Error",
                 str(error)
             )
 
@@ -834,6 +982,15 @@ class SignalIntelligenceGUI(QWidget):
         self,
         result
     ):
+
+        samples = result.get(
+            "samples"
+        )
+
+        sample_rate = result.get(
+            "sample_rate"
+        )
+
 
         # ----------------------------------------------------
         # Format
@@ -853,32 +1010,16 @@ class SignalIntelligenceGUI(QWidget):
         # Sample rate
         # ----------------------------------------------------
 
-        sample_rate = result.get(
-            "sample_rate",
-            None
-        )
-
         if sample_rate is not None:
 
             self.info_sample_rate.setText(
                 f"{float(sample_rate):,.2f} Hz"
             )
 
-        else:
-
-            self.info_sample_rate.setText(
-                "-"
-            )
-
 
         # ----------------------------------------------------
-        # Number of samples
+        # Number samples
         # ----------------------------------------------------
-
-        samples = result.get(
-            "samples",
-            None
-        )
 
         if samples is not None:
 
@@ -886,63 +1027,24 @@ class SignalIntelligenceGUI(QWidget):
                 f"{len(samples):,}"
             )
 
-        else:
-
-            # Some versions of the ingestion
-            # module may already provide num_samples.
-
-            num_samples = result.get(
-                "num_samples",
-                None
-            )
-
-            if num_samples is not None:
-
-                self.info_num_samples.setText(
-                    f"{num_samples:,}"
-                )
-
-            else:
-
-                self.info_num_samples.setText(
-                    "-"
-                )
-
 
         # ----------------------------------------------------
         # Duration
         # ----------------------------------------------------
 
-        duration = result.get(
-            "duration_sec",
-            None
-        )
-
-        if duration is not None:
-
-            self.info_duration.setText(
-                f"{float(duration):.6f} sec"
-            )
-
-        elif (
+        if (
             samples is not None
             and sample_rate is not None
             and float(sample_rate) > 0
         ):
 
-            calculated_duration = (
+            duration = (
                 len(samples)
                 / float(sample_rate)
             )
 
             self.info_duration.setText(
-                f"{calculated_duration:.6f} sec"
-            )
-
-        else:
-
-            self.info_duration.setText(
-                "-"
+                f"{duration:.6f} sec"
             )
 
 
@@ -953,15 +1055,7 @@ class SignalIntelligenceGUI(QWidget):
         if samples is not None:
 
             self.info_data_type.setText(
-                str(
-                    samples.dtype
-                )
-            )
-
-        else:
-
-            self.info_data_type.setText(
-                "-"
+                str(samples.dtype)
             )
 
 
@@ -970,8 +1064,7 @@ class SignalIntelligenceGUI(QWidget):
         # ----------------------------------------------------
 
         channels = result.get(
-            "channels",
-            None
+            "channels"
         )
 
         if channels is not None:
@@ -980,15 +1073,9 @@ class SignalIntelligenceGUI(QWidget):
                 str(channels)
             )
 
-        else:
+        elif samples is not None:
 
-            # IQ complex data normally represents
-            # I and Q components.
-
-            if (
-                samples is not None
-                and np_is_complex(samples)
-            ):
+            if np.iscomplexobj(samples):
 
                 self.info_channels.setText(
                     "2 (I + Q)"
@@ -997,35 +1084,543 @@ class SignalIntelligenceGUI(QWidget):
             else:
 
                 self.info_channels.setText(
-                    "-"
+                    "1"
                 )
 
 
-# ============================================================
-# HELPER FUNCTION
-# ============================================================
+    # ========================================================
+    # PARAMETER EXTRACTION
+    # ========================================================
 
-def np_is_complex(array):
+    def display_parameters(
+        self,
+        result
+    ):
 
-    """
-    Check whether a NumPy array contains complex data.
-    """
+        # ----------------------------------------------------
+        # Peak frequency
+        # ----------------------------------------------------
 
-    try:
-
-        import numpy as np
-
-        return np.iscomplexobj(
-            array
+        peak_frequency = result.get(
+            "peak_frequency"
         )
 
-    except Exception:
+        if peak_frequency is not None:
 
-        return False
+            self.peak_frequency_value.setText(
+                self.format_frequency(
+                    peak_frequency
+                )
+            )
+
+
+        # ----------------------------------------------------
+        # Bandwidth
+        # ----------------------------------------------------
+
+        bandwidth = self.calculate_bandwidth(
+            result
+        )
+
+        self.bandwidth_value.setText(
+            self.format_frequency(
+                bandwidth
+            )
+        )
+
+
+        # ----------------------------------------------------
+        # SNR
+        # ----------------------------------------------------
+
+        snr = self.calculate_snr()
+
+        self.snr_value.setText(
+            f"{snr:.2f} dB"
+        )
+
+
+        # ----------------------------------------------------
+        # Modulation
+        # ----------------------------------------------------
+
+        modulation = result.get(
+            "detected_modulation",
+            "Unknown"
+        )
+
+        self.modulation_value.setText(
+            str(modulation)
+        )
+
+
+        # ----------------------------------------------------
+        # Confidence
+        # ----------------------------------------------------
+
+        confidence = result.get(
+            "modulation_confidence",
+            0
+        )
+
+        try:
+
+            self.confidence_value.setText(
+                f"{float(confidence) * 100:.1f}%"
+            )
+
+        except Exception:
+
+            self.confidence_value.setText(
+                "-"
+            )
+
+
+    # ========================================================
+    # FREQUENCY FORMAT
+    # ========================================================
+
+    def format_frequency(
+        self,
+        frequency
+    ):
+
+        frequency = abs(
+            float(frequency)
+        )
+
+        if frequency >= 1_000_000:
+
+            return f"{frequency / 1_000_000:.3f} MHz"
+
+        elif frequency >= 1_000:
+
+            return f"{frequency / 1_000:.3f} kHz"
+
+        else:
+
+            return f"{frequency:.2f} Hz"
+
+
+    # ========================================================
+    # BANDWIDTH
+    # ========================================================
+
+    def calculate_bandwidth(
+        self,
+        result
+    ):
+
+        frequencies = result.get(
+            "fft_frequency"
+        )
+
+        magnitude = result.get(
+            "fft_magnitude_db"
+        )
+
+
+        if frequencies is None or magnitude is None:
+
+            return 0
+
+
+        frequencies = np.asarray(
+            frequencies
+        )
+
+        magnitude = np.asarray(
+            magnitude
+        )
+
+
+        if len(magnitude) == 0:
+
+            return 0
+
+
+        # ----------------------------------------------------
+        # -3 dB bandwidth
+        # ----------------------------------------------------
+
+        peak = np.max(
+            magnitude
+        )
+
+        threshold = peak - 3.0
+
+
+        indices = np.where(
+            magnitude >= threshold
+        )[0]
+
+
+        if len(indices) < 2:
+
+            return 0
+
+
+        bandwidth = (
+            frequencies[indices[-1]]
+            -
+            frequencies[indices[0]]
+        )
+
+
+        return abs(
+            bandwidth
+        )
+
+
+    # ========================================================
+    # SNR
+    # ========================================================
+
+    def calculate_snr(
+        self
+    ):
+
+        if self.current_signal is None:
+
+            return 0
+
+
+        signal = np.asarray(
+            self.current_signal
+        )
+
+
+        if len(signal) == 0:
+
+            return 0
+
+
+        # ----------------------------------------------------
+        # Signal power
+        # ----------------------------------------------------
+
+        signal_power = np.mean(
+            np.abs(signal) ** 2
+        )
+
+
+        # ----------------------------------------------------
+        # Estimate noise
+        # ----------------------------------------------------
+
+        spectrum = np.abs(
+            np.fft.fft(signal)
+        )
+
+
+        if len(spectrum) == 0:
+
+            return 0
+
+
+        peak_index = np.argmax(
+            spectrum
+        )
+
+
+        # Remove strongest component
+        spectrum_copy = spectrum.copy()
+
+        start = max(
+            0,
+            peak_index - 3
+        )
+
+        end = min(
+            len(spectrum),
+            peak_index + 4
+        )
+
+        spectrum_copy[
+            start:end
+        ] = 0
+
+
+        noise_power = np.mean(
+            spectrum_copy ** 2
+        )
+
+
+        if noise_power <= 0:
+
+            return 0
+
+
+        snr = 10 * np.log10(
+            signal_power
+            /
+            noise_power
+        )
+
+
+        return float(
+            snr
+        )
+
+
+    # ========================================================
+    # EXPORT JSON
+    # ========================================================
+
+    def export_json(self):
+
+        if self.current_result is None:
+
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "Load and analyze a signal first."
+            )
+
+            return
+
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save JSON Report",
+            "signal_report.json",
+            "JSON Files (*.json)"
+        )
+
+
+        if not file_path:
+
+            return
+
+
+        result = self.current_result
+
+
+        data = {
+
+            "file": self.current_filepath,
+
+            "format":
+                self.format_value.text(),
+
+            "sample_rate":
+                self.info_sample_rate.text(),
+
+            "number_of_samples":
+                self.info_num_samples.text(),
+
+            "duration":
+                self.info_duration.text(),
+
+            "data_type":
+                self.info_data_type.text(),
+
+            "channels":
+                self.info_channels.text(),
+
+            "peak_frequency":
+                self.peak_frequency_value.text(),
+
+            "bandwidth":
+                self.bandwidth_value.text(),
+
+            "snr":
+                self.snr_value.text(),
+
+            "modulation":
+                self.modulation_value.text(),
+
+            "confidence":
+                self.confidence_value.text()
+        }
+
+
+        with open(
+            file_path,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            json.dump(
+                data,
+                file,
+                indent=4
+            )
+
+
+        QMessageBox.information(
+            self,
+            "Export Successful",
+            "JSON report saved successfully."
+        )
+
+
+    # ========================================================
+    # EXPORT CSV
+    # ========================================================
+
+    def export_csv(self):
+
+        if self.current_result is None:
+
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "Load and analyze a signal first."
+            )
+
+            return
+
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save CSV Report",
+            "signal_report.csv",
+            "CSV Files (*.csv)"
+        )
+
+
+        if not file_path:
+
+            return
+
+
+        rows = [
+
+            ["Parameter", "Value"],
+
+            [
+                "File",
+                self.current_filepath
+            ],
+
+            [
+                "Format",
+                self.format_value.text()
+            ],
+
+            [
+                "Sample Rate",
+                self.info_sample_rate.text()
+            ],
+
+            [
+                "Number of Samples",
+                self.info_num_samples.text()
+            ],
+
+            [
+                "Duration",
+                self.info_duration.text()
+            ],
+
+            [
+                "Data Type",
+                self.info_data_type.text()
+            ],
+
+            [
+                "Channels",
+                self.info_channels.text()
+            ],
+
+            [
+                "Peak Frequency",
+                self.peak_frequency_value.text()
+            ],
+
+            [
+                "Bandwidth",
+                self.bandwidth_value.text()
+            ],
+
+            [
+                "SNR",
+                self.snr_value.text()
+            ],
+
+            [
+                "Modulation",
+                self.modulation_value.text()
+            ],
+
+            [
+                "Confidence",
+                self.confidence_value.text()
+            ]
+        ]
+
+
+        with open(
+            file_path,
+            "w",
+            newline="",
+            encoding="utf-8"
+        ) as file:
+
+            writer = csv.writer(
+                file
+            )
+
+            writer.writerows(
+                rows
+            )
+
+
+        QMessageBox.information(
+            self,
+            "Export Successful",
+            "CSV report saved successfully."
+        )
+
+
+    # ========================================================
+    # SAVE PLOT
+    # ========================================================
+
+    def export_plot(self):
+
+        if self.current_result is None:
+
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "Load a signal first."
+            )
+
+            return
+
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Plot",
+            "signal_analysis.png",
+            "PNG Files (*.png)"
+        )
+
+
+        if not file_path:
+
+            return
+
+
+        # Save the main analysis figure
+        self.analysis_widget.row1_figure.savefig(
+            file_path,
+            dpi=200,
+            bbox_inches="tight"
+        )
+
+
+        QMessageBox.information(
+            self,
+            "Export Successful",
+            "Plot saved successfully."
+        )
 
 
 # ============================================================
-# APPLICATION ENTRY POINT
+# MAIN
 # ============================================================
 
 def main():
@@ -1044,7 +1639,7 @@ def main():
 
 
 # ============================================================
-# RUN APPLICATION
+# ENTRY POINT
 # ============================================================
 
 if __name__ == "__main__":
