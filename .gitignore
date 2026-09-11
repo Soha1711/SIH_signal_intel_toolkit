@@ -20,3 +20,7 @@ Thumbs.db
 
 # Generated temporary files
 *.log
+
+# Generated test export folders
+final_exports/
+real_data_exports/
