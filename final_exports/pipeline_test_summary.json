@@ -1,0 +1,15 @@
+{
+    "sample_rate": 2000000,
+    "total_samples": 10000,
+    "snr_db": 0.59,
+    "bandwidth_3db_hz": 0.0,
+    "peak_power_db": 1.39,
+    "avg_power_db": 0.02,
+    "modulation_type": "QPSK",
+    "sync_word_used": "10101011",
+    "sync_found": true,
+    "sync_index": 8,
+    "payload_length_bits": 56,
+    "raw_payload_bits": "01010011010010010100100000110010001100000011001000110110",
+    "decoded_text": "SIH2026"
+}

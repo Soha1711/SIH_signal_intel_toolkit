@@ -1,0 +1,8 @@
+Parameter Name,Extracted Value
+sample_rate,2000000
+center_frequency,433920000
+snr_db,18.25
+bandwidth_hz,250000
+modulation,QPSK
+sync_word_found,True
+sync_index,16
