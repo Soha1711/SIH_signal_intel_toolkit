@@ -1,13 +1,13 @@
 from typing import Dict, Any, Tuple
+import numpy as np
 
 
 class PayloadProcessor:
     """Processes demodulated bitstreams, locates sync words/preambles,
-
     and extracts structured header and payload data.
     """
 
-    def __init__(self, bitstream: str):
+    def __init__(self, bitstream: str = ""):
         self.bitstream = bitstream
 
     def find_sync_word(self, sync_pattern: str = "10101011") -> Tuple[int, str]:
@@ -27,6 +27,18 @@ class PayloadProcessor:
             byte_chunk = bitstring[i : i + 8]
             chars.append(chr(int(byte_chunk, 2)))
         return "".join(chars)
+
+    def demodulate_bits(self, signal) -> str:
+        """Helper to convert complex/real signal array directly to a bitstream."""
+        if signal is None or len(signal) == 0:
+            return ""
+
+        # Demodulate based on sign of IQ component / phase
+        if np.iscomplexobj(signal):
+            angles = np.angle(signal)
+            return "".join(["1" if a > 0 else "0" for a in angles])
+        else:
+            return "".join(["1" if s > 0 else "0" for s in signal])
 
     def extract_full_frame(
         self, sync_pattern: str = "10101011"
@@ -51,12 +63,20 @@ class PayloadProcessor:
             "decoded_text": text_decoded,
         }
 
+    def extract_payload(self, signal, sync_pattern: str = "10101011") -> Tuple[str, str]:
+        """Direct bridge method called by GUI: returns (bitstream, decoded_text)."""
+        if isinstance(signal, (list, np.ndarray)):
+            self.bitstream = self.demodulate_bits(signal)
+        elif isinstance(signal, str):
+            self.bitstream = signal
+
+        frame = self.extract_full_frame(sync_pattern=sync_pattern)
+        return frame["raw_payload_bits"], frame["decoded_text"]
+
 
 if __name__ == "__main__":
-    # Test sample with sync pattern '10101011' + ASCII 'SIH2026'
-    # ASCII 'S' = 01010011, 'I' = 01001001, 'H' = 01001000
-    preamble = "00000000"  # Noise/Preamble bits
-    sync = "10101011"  # Sync Word
+    preamble = "00000000"
+    sync = "10101011"
     payload = "010100110100100101001000"  # ASCII Payload ('SIH')
 
     test_stream = preamble + sync + payload

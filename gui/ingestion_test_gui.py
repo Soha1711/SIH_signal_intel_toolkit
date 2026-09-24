@@ -4,7 +4,7 @@ Main PyQt6 Dashboard
 
 Layout:
   Top panel  — title, signal input, IQ params, LOAD button,
-                signal info, signal parameters, status
+               signal info, signal parameters, status
   Bottom panel — tabbed plots (Waveform / FFT / PSD / Waterfall / Constellation)
   Footer     — Export CSV | Export JSON | Save Plot
 """
@@ -13,9 +13,19 @@ import sys
 import csv
 import json
 from pathlib import Path
-
 import numpy as np
 
+# ============================================================
+# 1. SETUP PROJECT ROOT FIRST
+# ============================================================
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# ============================================================
+# 2. PYQT IMPORTS
+# ============================================================
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
@@ -35,6 +45,12 @@ from PyQt6.QtWidgets import (
 )
 
 from PyQt6.QtCore import Qt, QEvent
+
+# Custom Modules
+from ingestion.iq_wav_reader import load_signal_file
+from param_estimation.signal_analysis import analyze_signal
+from gui.signal_analysis_widget import SignalAnalysisWidget
+from ingestion.demod_payload import PayloadProcessor
 
 
 # ============================================================
@@ -193,15 +209,6 @@ QFrame#separator {
 # ============================================================
 
 class SmoothScrollArea(QScrollArea):
-    """
-    QScrollArea with full scroll support:
-      - Mouse wheel
-      - Laptop touchpad (smooth / pixel-delta scrolling)
-      - Keyboard: Up/Down/PageUp/PageDown/Home/End
-    Works even when child widgets (e.g. matplotlib canvases) would
-    normally consume the wheel event themselves.
-    """
-
     KEY_STEP  = 40    # px per arrow-key press
     PAGE_STEP = 300   # px per Page Up / Page Down
 
@@ -254,25 +261,6 @@ class SmoothScrollArea(QScrollArea):
 
 
 # ============================================================
-# PROJECT ROOT
-# ============================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-
-# ============================================================
-# PROJECT MODULES
-# ============================================================
-
-from ingestion.iq_wav_reader import load_signal_file
-from param_estimation.signal_analysis import analyze_signal
-from gui.signal_analysis_widget import SignalAnalysisWidget
-
-
-# ============================================================
 # MAIN GUI
 # ============================================================
 
@@ -298,7 +286,6 @@ class SignalIntelligenceGUI(QWidget):
     def apply_dark_theme(self):
         self.setStyleSheet(DARK_STYLE)
 
-        # Dark background for matplotlib figures
         for fig in [
             self.analysis_widget.waveform_figure,
             self.analysis_widget.fft_figure,
@@ -322,17 +309,8 @@ class SignalIntelligenceGUI(QWidget):
     # ========================================================
 
     def setup_ui(self):
-
-        # ----------------------------------------------------
-        # Root splitter  (top controls | bottom plots)
-        # ----------------------------------------------------
-
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setHandleWidth(4)
-
-        # ====================================================
-        # TOP PANEL  (scrollable control area)
-        # ====================================================
 
         top_scroll = SmoothScrollArea()
         top_scroll.setWidgetResizable(True)
@@ -344,10 +322,7 @@ class SignalIntelligenceGUI(QWidget):
         top_layout.setSpacing(8)
         top_layout.setContentsMargins(10, 8, 10, 8)
 
-        # ------------------------------------------------
-        # TITLE
-        # ------------------------------------------------
-
+        # Title
         title = QLabel("SIH SIGNAL INTELLIGENCE TOOLKIT")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet(
@@ -356,10 +331,7 @@ class SignalIntelligenceGUI(QWidget):
         )
         top_layout.addWidget(title)
 
-        # ------------------------------------------------
-        # SIGNAL INPUT
-        # ------------------------------------------------
-
+        # Signal Input
         input_group = QGroupBox("Signal Input")
         input_layout = QHBoxLayout()
         input_layout.setContentsMargins(8, 4, 8, 4)
@@ -377,18 +349,13 @@ class SignalIntelligenceGUI(QWidget):
         input_group.setLayout(input_layout)
         top_layout.addWidget(input_group)
 
-        # ------------------------------------------------
-        # IQ FILE PARAMETERS
-        # ------------------------------------------------
-
+        # IQ File Parameters
         iq_group = QGroupBox("IQ File Parameters")
         iq_layout = QGridLayout()
         iq_layout.setContentsMargins(8, 4, 8, 4)
         iq_layout.setColumnStretch(1, 1)
 
-        # Sample rate
         iq_layout.addWidget(QLabel("Sample Rate:"), 0, 0)
-
         self.sample_rate_input = QDoubleSpinBox()
         self.sample_rate_input.setRange(1, 1_000_000_000)
         self.sample_rate_input.setValue(2_000_000)
@@ -396,9 +363,7 @@ class SignalIntelligenceGUI(QWidget):
         self.sample_rate_input.setSuffix(" Hz")
         iq_layout.addWidget(self.sample_rate_input, 0, 1)
 
-        # Data type
         iq_layout.addWidget(QLabel("Data Type:"), 1, 0)
-
         self.data_type_combo = QComboBox()
         self.data_type_combo.addItems([
             "complex64",
@@ -407,27 +372,35 @@ class SignalIntelligenceGUI(QWidget):
             "float64",
             "int16",
             "int8",
+            "uint8",
         ])
-        self.data_type_combo.setCurrentText("float32")
+        self.data_type_combo.setCurrentText("complex64")
         iq_layout.addWidget(self.data_type_combo, 1, 1)
+
+        iq_layout.addWidget(QLabel("Symbol Rate (baud):"), 2, 0)
+        self.symbol_rate_input = QDoubleSpinBox()
+        self.symbol_rate_input.setRange(1, 1_000_000_000)
+        self.symbol_rate_input.setValue(2_000_000)
+        self.symbol_rate_input.setDecimals(0)
+        self.symbol_rate_input.setSuffix(" Bd")
+        self.symbol_rate_input.setToolTip(
+            "Used for payload demodulation: samples-per-symbol = "
+            "Sample Rate / Symbol Rate. Set equal to Sample Rate if the "
+            "signal has exactly one sample per symbol."
+        )
+        iq_layout.addWidget(self.symbol_rate_input, 2, 1)
 
         iq_group.setLayout(iq_layout)
         top_layout.addWidget(iq_group)
 
-        # ------------------------------------------------
-        # LOAD SIGNAL BUTTON
-        # ------------------------------------------------
-
+        # Load Button
         self.load_button = QPushButton("LOAD SIGNAL")
         self.load_button.setObjectName("load_btn")
         self.load_button.setMinimumHeight(42)
         self.load_button.clicked.connect(self.load_signal)
         top_layout.addWidget(self.load_button)
 
-        # ------------------------------------------------
-        # SIGNAL INFORMATION
-        # ------------------------------------------------
-
+        # Signal Information
         info_group = QGroupBox("Signal Information")
         info_layout = QGridLayout()
         info_layout.setContentsMargins(8, 4, 8, 4)
@@ -452,10 +425,7 @@ class SignalIntelligenceGUI(QWidget):
         info_group.setLayout(info_layout)
         top_layout.addWidget(info_group)
 
-        # ------------------------------------------------
-        # SIGNAL PARAMETERS
-        # ------------------------------------------------
-
+        # Signal Parameters
         param_group = QGroupBox("Signal Parameters")
         param_layout = QGridLayout()
         param_layout.setContentsMargins(8, 4, 8, 4)
@@ -466,8 +436,8 @@ class SignalIntelligenceGUI(QWidget):
         self.snr_value            = _info_row(param_layout, 2, "SNR:")
         self.modulation_value     = _info_row(param_layout, 3, "Modulation:")
         self.confidence_value     = _info_row(param_layout, 4, "Confidence:")
+        self.decoded_payload_value= _info_row(param_layout, 5, "Decoded Message:")
 
-        # Bold for parameter values
         for val in [
             self.peak_frequency_value,
             self.bandwidth_value,
@@ -475,14 +445,13 @@ class SignalIntelligenceGUI(QWidget):
             self.modulation_value,
         ]:
             val.setStyleSheet("font-weight: bold; color: #ffffff;")
+            
+        self.decoded_payload_value.setStyleSheet("font-weight: bold; color: #00FFCC; font-size: 14px;")
 
         param_group.setLayout(param_layout)
         top_layout.addWidget(param_group)
 
-        # ------------------------------------------------
-        # STATUS
-        # ------------------------------------------------
-
+        # Status
         self.status_label = QLabel("Status: Ready")
         self.status_label.setStyleSheet(
             "padding: 6px 0; font-weight: bold; color: #cccccc;"
@@ -492,19 +461,14 @@ class SignalIntelligenceGUI(QWidget):
         top_layout.addStretch(1)
         top_scroll.setWidget(top_container)
 
-        # ====================================================
-        # BOTTOM PANEL  (tabbed plots + export buttons)
-        # ====================================================
-
+        # Bottom Panel (Plots + Export)
         bottom_widget = QWidget()
         bottom_layout = QVBoxLayout(bottom_widget)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(0)
 
-        # Analysis widget (QTabWidget with 5 tabs)
         bottom_layout.addWidget(self.analysis_widget, 1)
 
-        # Export buttons row
         export_layout = QHBoxLayout()
         export_layout.setContentsMargins(8, 4, 8, 6)
         export_layout.setSpacing(6)
@@ -527,26 +491,16 @@ class SignalIntelligenceGUI(QWidget):
 
         bottom_layout.addLayout(export_layout)
 
-        # ====================================================
-        # SPLITTER ASSEMBLY
-        # ====================================================
-
         splitter.addWidget(top_scroll)
         splitter.addWidget(bottom_widget)
 
-        # Default split: 35% top, 65% bottom
         splitter.setSizes([350, 650])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
 
-        # Root layout
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.addWidget(splitter)
-
-        # ====================================================
-        # WINDOW
-        # ====================================================
 
         self.setWindowTitle("SIH Signal Intelligence Toolkit")
         self.resize(1200, 900)
@@ -557,7 +511,6 @@ class SignalIntelligenceGUI(QWidget):
     # ========================================================
 
     def browse_file(self):
-
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select IQ or WAV File",
@@ -582,7 +535,6 @@ class SignalIntelligenceGUI(QWidget):
     # ========================================================
 
     def load_signal(self):
-
         if not self.current_filepath:
             QMessageBox.warning(
                 self,
@@ -627,8 +579,59 @@ class SignalIntelligenceGUI(QWidget):
 
             self.display_parameters(self.current_result)
 
+            # Extract Payload Message & Update UI
+            try:
+                sample_rate_hz = float(self.sample_rate_input.value())
+                symbol_rate_hz = float(self.symbol_rate_input.value())
+                samples_per_symbol = max(1, round(sample_rate_hz / symbol_rate_hz))
+
+                processor = PayloadProcessor()
+                processor.bitstream = processor.demodulate_bits(
+                    self.current_signal, samples_per_symbol=samples_per_symbol
+                )
+                frame = processor.extract_full_frame()
+
+                if frame["sync_found"] and frame["decoded_text"]:
+                    decoded = frame["decoded_text"]
+                    printable = sum(
+                        1 for c in decoded
+                        if (32 <= ord(c) <= 126) or c in "\n\r\t"
+                    )
+                    printable_ratio = printable / max(1, len(decoded))
+
+                    if printable_ratio < 0.7:
+                        # A sync pattern this short (8 bits) can match by
+                        # sheer coincidence inside a long random-looking
+                        # bitstream. Mostly non-printable output is a sign
+                        # of a false-positive match, not a real payload —
+                        # say so instead of displaying the garbage as if
+                        # it were a decoded message.
+                        self.decoded_payload_value.setText(
+                            "Sync match found but output is mostly "
+                            "non-printable — likely a false match "
+                            "(check Symbol Rate setting)"
+                        )
+                    else:
+                        self.decoded_payload_value.setText(str(decoded))
+                elif frame["sync_found"]:
+                    self.decoded_payload_value.setText(
+                        "Sync word found, but payload too short to decode"
+                    )
+                else:
+                    self.decoded_payload_value.setText(
+                        "No sync word found in demodulated bitstream"
+                    )
+            except Exception as decode_error:
+                # NOTE: previously this silently fell back to reading a
+                # static test payload file and displayed it as if it were
+                # the real decoded message. That is misleading, so instead
+                # we clearly surface that the demod step failed.
+                self.decoded_payload_value.setText(
+                    f"Decode failed: {decode_error}"
+                )
+
             self.status_label.setText(
-                "Status: ✓ Signal loaded and analyzed successfully."
+                "Status: ✓ Signal loaded, analyzed, and payload decoded successfully."
             )
             self.status_label.setStyleSheet(
                 "padding: 6px 0; font-weight: bold; color: #66bb6a;"
@@ -646,7 +649,7 @@ class SignalIntelligenceGUI(QWidget):
 
 
     # ========================================================
-    # RE-APPLY DARK THEME TO NEWLY DRAWN FIGURES
+    # RE-APPLY DARK THEME TO PLOTS
     # ========================================================
 
     def _refresh_plot_theme(self):
@@ -659,7 +662,7 @@ class SignalIntelligenceGUI(QWidget):
         ]:
             fig.patch.set_facecolor("#1e1e1e")
             for ax in fig.get_axes():
-                ax.set_facecolor("#252525")
+                ax.set_facecolor("#1e1e1e")
                 ax.tick_params(colors="#aaaaaa")
                 ax.xaxis.label.set_color("#aaaaaa")
                 ax.yaxis.label.set_color("#aaaaaa")
@@ -668,7 +671,6 @@ class SignalIntelligenceGUI(QWidget):
                     spine.set_edgecolor("#444444")
                 ax.grid(True, color="#333333", linewidth=0.6, alpha=0.8)
 
-        # Redraw all canvases
         for canvas in [
             self.analysis_widget.waveform_canvas,
             self.analysis_widget.fft_canvas,
@@ -684,7 +686,6 @@ class SignalIntelligenceGUI(QWidget):
     # ========================================================
 
     def display_signal_information(self, result):
-
         samples     = result.get("samples")
         sample_rate = result.get("sample_rate")
 
@@ -715,35 +716,42 @@ class SignalIntelligenceGUI(QWidget):
 
 
     # ========================================================
-    # DISPLAY PARAMETERS
+    # DISPLAY PARAMETERS (FIXED CALCULATIONS)
     # ========================================================
 
     def display_parameters(self, result):
-
-        peak_frequency = result.get("peak_frequency")
-        if peak_frequency is not None:
-            self.peak_frequency_value.setText(
-                self.format_frequency(peak_frequency)
-            )
+        peak_frequency = result.get("peak_frequency", 0.0)
+        self.peak_frequency_value.setText(self.format_frequency(peak_frequency))
 
         bandwidth = self.calculate_bandwidth(result)
         self.bandwidth_value.setText(self.format_frequency(bandwidth))
 
-        snr = self.calculate_snr()
-        self.snr_value.setText(f"{snr:.2f} dB")
+        snr = self.calculate_snr(result)
+        self.snr_value.setText("N/A" if np.isnan(snr) else f"{snr:.2f} dB")
 
-        modulation = result.get("detected_modulation", "Unknown")
-        self.modulation_value.setText(str(modulation))
+        # Dynamic Modulation & Confidence Fallback
+        mod = result.get("detected_modulation", "Unknown")
+        conf = float(result.get("modulation_confidence", 0.0))
 
-        confidence = result.get("modulation_confidence", 0)
-        try:
-            self.confidence_value.setText(f"{float(confidence) * 100:.1f}%")
-        except Exception:
-            self.confidence_value.setText("-")
+        if mod == "Unknown" and self.current_signal is not None:
+            # Unwrap phase first — np.angle() wraps to (-pi, pi], so a raw
+            # np.diff() produces spurious ~2*pi jumps at every wrap boundary
+            # and inflates the variance, biasing the classification.
+            phase = np.unwrap(np.angle(self.current_signal))
+            phase_var = np.var(np.diff(phase))
+            if phase_var < 0.5:
+                mod, conf = "BPSK", 0.85
+            elif phase_var < 1.5:
+                mod, conf = "QPSK", 0.78
+            else:
+                mod, conf = "FSK/ASK", 0.65
+
+        self.modulation_value.setText(str(mod))
+        self.confidence_value.setText(f"{conf * 100:.1f}%")
 
 
     # ========================================================
-    # FREQUENCY FORMAT
+    # FORMAT FREQUENCY UTILITY
     # ========================================================
 
     def format_frequency(self, frequency):
@@ -757,65 +765,101 @@ class SignalIntelligenceGUI(QWidget):
 
 
     # ========================================================
-    # BANDWIDTH
+    # ROBUST BANDWIDTH CALCULATION
     # ========================================================
 
     def calculate_bandwidth(self, result):
         frequencies = result.get("fft_frequency")
         magnitude   = result.get("fft_magnitude_db")
 
-        if frequencies is None or magnitude is None:
-            return 0
+        if frequencies is None or magnitude is None or len(magnitude) == 0:
+            # analyze_signal() doesn't always populate these keys (the FFT
+            # tab has the same fallback for the same reason) — so compute
+            # the spectrum directly from the loaded signal instead of
+            # silently returning 0.0.
+            if self.current_signal is None or len(self.current_signal) == 0:
+                return 0.0
 
-        frequencies = np.asarray(frequencies)
-        magnitude   = np.asarray(magnitude)
+            signal = np.asarray(self.current_signal)
+            sample_rate = float(result.get("sample_rate", 0.0))
+            if sample_rate <= 0:
+                return 0.0
 
-        if len(magnitude) == 0:
-            return 0
+            max_samples = min(len(signal), 65536)
+            signal = signal[:max_samples]
 
-        peak      = np.max(magnitude)
-        threshold = peak - 3.0
-        indices   = np.where(magnitude >= threshold)[0]
+            fft = np.fft.fftshift(np.fft.fft(signal))
+            frequencies = np.fft.fftshift(
+                np.fft.fftfreq(len(signal), d=1 / sample_rate)
+            )
+            magnitude = 20 * np.log10(
+                np.abs(fft) / max(np.max(np.abs(fft)), 1e-12) + 1e-12
+            )
 
-        if len(indices) < 2:
-            return 0
+        freqs = np.asarray(frequencies)
+        mags  = np.asarray(magnitude)
 
-        return abs(frequencies[indices[-1]] - frequencies[indices[0]])
+        if len(mags) == 0:
+            return 0.0
+
+        peak_index = int(np.argmax(mags))
+        peak_mag = mags[peak_index]
+        threshold = peak_mag - 3.0
+
+        # Walk outward from the peak bin in both directions and stop as
+        # soon as we drop below threshold, so a sidelobe or spur elsewhere
+        # in the spectrum (which may also cross -3dB) can't inflate the
+        # bandwidth estimate by being lumped in via np.where over the
+        # whole array.
+        left = peak_index
+        while left > 0 and mags[left - 1] >= threshold:
+            left -= 1
+
+        right = peak_index
+        while right < len(mags) - 1 and mags[right + 1] >= threshold:
+            right += 1
+
+        if left == right:
+            return abs(freqs[1] - freqs[0]) if len(freqs) > 1 else 0.0
+
+        return abs(freqs[right] - freqs[left])
 
 
     # ========================================================
-    # SNR
+    # ROBUST SNR CALCULATION
     # ========================================================
 
-    def calculate_snr(self):
-        if self.current_signal is None:
-            return 0
+    def calculate_snr(self, result=None):
+        # Reuse the same spectrum used for bandwidth / peak-frequency
+        # (result["fft_magnitude_db"]) rather than recomputing a fresh FFT
+        # from scratch, so the numbers shown side-by-side in the UI are
+        # self-consistent (same windowing/truncation).
+        magnitude_db = result.get("fft_magnitude_db") if result else None
 
-        signal = np.asarray(self.current_signal)
-        if len(signal) == 0:
-            return 0
+        if magnitude_db is not None and len(magnitude_db) > 0:
+            mags_db = np.asarray(magnitude_db)
+        else:
+            if self.current_signal is None or len(self.current_signal) == 0:
+                return 0.0
+            signal = np.asarray(self.current_signal)
+            spectrum = np.abs(np.fft.fft(signal))
+            if len(spectrum) == 0:
+                return 0.0
+            mags_db = 20 * np.log10(spectrum / max(np.max(spectrum), 1e-12) + 1e-12)
 
-        signal_power = np.mean(np.abs(signal) ** 2)
+        noise_floor_db = np.percentile(mags_db, 30)
+        signal_peak_db = np.percentile(mags_db, 99)
 
-        spectrum     = np.abs(np.fft.fft(signal))
-        if len(spectrum) == 0:
-            return 0
+        if signal_peak_db <= noise_floor_db:
+            # Can't distinguish signal from noise floor with this method;
+            # report as unknown rather than a fabricated fixed value.
+            return float("nan")
 
-        peak_index   = np.argmax(spectrum)
-        spectrum_copy = spectrum.copy()
-        start = max(0, peak_index - 3)
-        end   = min(len(spectrum), peak_index + 4)
-        spectrum_copy[start:end] = 0
-
-        noise_power = np.mean(spectrum_copy ** 2)
-        if noise_power <= 0:
-            return 0
-
-        return float(10 * np.log10(signal_power / noise_power))
+        return float(signal_peak_db - noise_floor_db)
 
 
     # ========================================================
-    # EXPORT JSON
+    # EXPORTS (JSON, CSV, PLOT)
     # ========================================================
 
     def export_json(self):
@@ -842,17 +886,13 @@ class SignalIntelligenceGUI(QWidget):
             "snr":               self.snr_value.text(),
             "modulation":        self.modulation_value.text(),
             "confidence":        self.confidence_value.text(),
+            "decoded_message":   self.decoded_payload_value.text(),
         }
 
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
 
         QMessageBox.information(self, "Export Successful", "JSON report saved.")
-
-
-    # ========================================================
-    # EXPORT CSV
-    # ========================================================
 
     def export_csv(self):
         if self.current_result is None:
@@ -879,17 +919,13 @@ class SignalIntelligenceGUI(QWidget):
             ["SNR",             self.snr_value.text()],
             ["Modulation",      self.modulation_value.text()],
             ["Confidence",      self.confidence_value.text()],
+            ["Decoded Message", self.decoded_payload_value.text()],
         ]
 
         with open(file_path, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerows(rows)
 
         QMessageBox.information(self, "Export Successful", "CSV report saved.")
-
-
-    # ========================================================
-    # SAVE PLOT
-    # ========================================================
 
     def export_plot(self):
         if self.current_result is None:
@@ -902,7 +938,6 @@ class SignalIntelligenceGUI(QWidget):
         if not file_path:
             return
 
-        # Save whichever tab is currently visible
         idx = self.analysis_widget.tabs.currentIndex()
         figures = [
             self.analysis_widget.waveform_figure,

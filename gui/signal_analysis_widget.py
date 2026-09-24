@@ -258,19 +258,19 @@ class SignalAnalysisWidget(QWidget):
             result["sample_rate"]
         )
 
-        # Limit points for GUI
+        # Limit points for GUI — downsample across the FULL signal (stride)
+        # rather than truncating to the first max_points samples, so the
+        # waveform tab shows the whole capture duration, not just the start.
         max_points = 5000
+        original_len = len(signal)
 
-        if len(signal) > max_points:
-
-            signal = signal[:max_points]
-
-        time = (
-            np.arange(
-                len(signal)
-            )
-            / sample_rate
-        )
+        if original_len > max_points:
+            step = max(1, original_len // max_points)
+            indices = np.arange(0, original_len, step)
+            signal = signal[indices]
+            time = indices / sample_rate
+        else:
+            time = np.arange(original_len) / sample_rate
 
         i_data = np.real(
             signal
@@ -803,21 +803,16 @@ class SignalAnalysisWidget(QWidget):
                 result["sample_rate"]
             )
 
-            max_points = min(
-                len(signal),
-                100000
-            )
+            max_points = 100000
+            original_len = len(signal)
 
-            signal = signal[
-                :max_points
-            ]
-
-            time = (
-                np.arange(
-                    len(signal)
-                )
-                / sample_rate
-            )
+            if original_len > max_points:
+                step = max(1, original_len // max_points)
+                indices = np.arange(0, original_len, step)
+                signal = signal[indices]
+                time = indices / sample_rate
+            else:
+                time = np.arange(original_len) / sample_rate
 
             data = np.column_stack(
                 (
