@@ -15,10 +15,9 @@ Also provides:
 - Export JSON
 - Save Plot
 """
-
 import json
+import warnings
 import numpy as np
-
 from scipy.signal import spectrogram
 
 from PyQt6.QtWidgets import (
@@ -37,6 +36,10 @@ from matplotlib.backends.backend_qtagg import (
 
 from matplotlib.figure import Figure
 
+from param_estimation import estimate_symbol_rate
+from param_estimation.symbol_rate_estimator import SymbolRateEstimator
+from param_estimation.modulation_classifier import ModulationClassifier
+
 
 class SignalAnalysisWidget(QWidget):
 
@@ -46,6 +49,18 @@ class SignalAnalysisWidget(QWidget):
         self.current_result = None
 
         self.setup_ui()
+
+    def _safe_tight_layout(self, figure):
+        """
+        Safely calls tight_layout() on a Matplotlib figure while suppressing
+        UserWarning warnings when Axes are incompatible with tight_layout.
+        """
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=UserWarning)
+                figure.tight_layout()
+        except Exception:
+            pass
 
     # ============================================================
     # CREATE GUI
@@ -181,7 +196,6 @@ class SignalAnalysisWidget(QWidget):
         self.constellation_figure = Figure(
             figsize=(10, 7)
         )
-
         self.constellation_canvas = FigureCanvas(
             self.constellation_figure
         )
@@ -205,6 +219,40 @@ class SignalAnalysisWidget(QWidget):
         self.setLayout(
             main_layout
         )
+
+    # ============================================================
+    # PROCESS SIGNAL & DISPLAY (PIPELINE CALL)
+    # ============================================================
+
+    def process_and_update_gui(self, signal_data, sample_rate, peak_freq=7500.0):
+        """
+        Runs signal analysis pipelines and updates all GUI visual displays.
+        """
+        signal_data = np.asarray(signal_data)
+        
+        # 1. Modulation classification
+        mod_classifier = ModulationClassifier()
+        mod_type, confidence = mod_classifier.classify_modulation(signal_data, sample_rate)
+        
+        # 2. Symbol rate estimation (Auto Estimation via Package Function / Class)
+        try:
+            symbol_rate = estimate_symbol_rate(signal_data, sample_rate)
+        except Exception:
+            estimator = SymbolRateEstimator()
+            symbol_rate = estimator.estimate_symbol_rate(signal_data, sample_rate)
+
+        # 3. Construct standard result package
+        result = {
+            "analysis_status": "success",
+            "samples": signal_data,
+            "sample_rate": sample_rate,
+            "peak_frequency": peak_freq,
+            "detected_modulation": mod_type,
+            "modulation_confidence": confidence,
+            "estimated_symbol_rate": symbol_rate
+        }
+
+        self.display_analysis(result)
 
     # ============================================================
     # DISPLAY ALL ANALYSIS
@@ -258,9 +306,6 @@ class SignalAnalysisWidget(QWidget):
             result["sample_rate"]
         )
 
-        # Limit points for GUI — downsample across the FULL signal (stride)
-        # rather than truncating to the first max_points samples, so the
-        # waveform tab shows the whole capture duration, not just the start.
         max_points = 5000
         original_len = len(signal)
 
@@ -311,7 +356,7 @@ class SignalAnalysisWidget(QWidget):
 
         ax.legend()
 
-        self.waveform_figure.tight_layout()
+        self._safe_tight_layout(self.waveform_figure)
 
         self.waveform_canvas.draw()
 
@@ -385,7 +430,6 @@ class SignalAnalysisWidget(QWidget):
         ax.set_title(
             "FFT / Magnitude Spectrum"
         )
-
         ax.set_xlabel(
             "Frequency (Hz)"
         )
@@ -399,7 +443,7 @@ class SignalAnalysisWidget(QWidget):
             alpha=0.3
         )
 
-        self.fft_figure.tight_layout()
+        self._safe_tight_layout(self.fft_figure)
 
         self.fft_canvas.draw()
 
@@ -484,7 +528,7 @@ class SignalAnalysisWidget(QWidget):
             alpha=0.3
         )
 
-        self.psd_figure.tight_layout()
+        self._safe_tight_layout(self.psd_figure)
 
         self.psd_canvas.draw()
 
@@ -506,7 +550,6 @@ class SignalAnalysisWidget(QWidget):
             result["sample_rate"]
         )
 
-        # Limit data for GUI performance
         max_samples = 200000
 
         if len(signal) > max_samples:
@@ -556,7 +599,6 @@ class SignalAnalysisWidget(QWidget):
             mode="magnitude"
         )
 
-        # Shift zero frequency to center
         frequencies = np.fft.fftshift(
             frequencies
         )
@@ -598,7 +640,7 @@ class SignalAnalysisWidget(QWidget):
             "Frequency (Hz)"
         )
 
-        self.waterfall_figure.tight_layout()
+        self._safe_tight_layout(self.waterfall_figure)
 
         self.waterfall_canvas.draw()
 
@@ -761,7 +803,7 @@ class SignalAnalysisWidget(QWidget):
                 for spine in ax_ref.spines.values():
                     spine.set_linewidth(0.5)
 
-        self.constellation_figure.tight_layout()
+        self._safe_tight_layout(self.constellation_figure)
         self.constellation_canvas.draw()
 
     # ============================================================
@@ -890,8 +932,6 @@ class SignalAnalysisWidget(QWidget):
                     np.ndarray
                 ):
 
-                    # Avoid exporting extremely
-                    # large arrays unnecessarily
                     if value.size <= 100000:
 
                         export_data[key] = (
@@ -941,7 +981,7 @@ class SignalAnalysisWidget(QWidget):
             )
 
     # ============================================================
-    # SAVE CURRENT PLOT
+    # SAVE PLOT
     # ============================================================
 
     def save_plot(self):

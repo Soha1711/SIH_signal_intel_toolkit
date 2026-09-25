@@ -35,8 +35,13 @@ class PayloadProcessor:
             signal = blocks.mean(axis=1)
 
         if np.iscomplexobj(signal):
-            angles = np.angle(signal)
-            return "".join(["1" if a > 0 else "0" for a in angles])
+            # BPSK symbols sit on the real axis (0deg / 180deg). Slicing on
+            # angle sign is wrong here: a point with a clearly positive
+            # real part but a tiny negative imaginary-noise component can
+            # still land at a negative angle, flipping the bit even though
+            # the real part alone would have decided it correctly. The
+            # real-part sign is the correct BPSK decision statistic.
+            return "".join(["1" if np.real(s) > 0 else "0" for s in signal])
         else:
             return "".join(["1" if s > 0 else "0" for s in signal])
 

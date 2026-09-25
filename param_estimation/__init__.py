@@ -1,3 +1,8 @@
+"""
+SIH 2026 - Signal Intelligence Toolkit
+Parameter Estimation Module
+"""
+
 from .signal_analysis import (
     analyze_signal,
     compute_waveform,
@@ -8,6 +13,7 @@ from .signal_analysis import (
 from .export_manager import SignalExporter
 from .parameter_extractor import ParameterExtractor
 from .demod_payload import PayloadProcessor
+from .symbol_rate_estimator import SymbolRateEstimator, estimate_symbol_rate
 
 __all__ = [
     "analyze_signal",
@@ -18,4 +24,6 @@ __all__ = [
     "SignalExporter",
     "ParameterExtractor",
     "PayloadProcessor",
+    "SymbolRateEstimator",
+    "estimate_symbol_rate",
 ]

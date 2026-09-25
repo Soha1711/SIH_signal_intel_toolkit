@@ -341,3 +341,79 @@ def detect_modulation_type(i_data, q_data):
         return "Unknown", confidence
 
     return best_type, confidence
+
+
+# ============================================================
+# MODULATION CLASSIFIER CLASS
+# ============================================================
+
+from typing import Optional, Tuple
+from pathlib import Path
+
+
+class ModulationClassifier:
+    """
+    Modulation classifier class using statistical cumulants, ML models,
+    and constellation template matching / heuristics.
+    """
+
+    def __init__(self, model_path: Optional[str] = None):
+        """
+        Initialize ModulationClassifier.
+        Optionally loads a pre-trained ML model if available.
+        """
+        self.model_path = Path(model_path) if model_path else (
+            Path(__file__).resolve().parent / "modulation_classifier.pkl"
+        )
+        self.model = None
+
+        if self.model_path.exists():
+            try:
+                import joblib
+                self.model = joblib.load(self.model_path)
+            except Exception as err:
+                print(f"Notice: Could not load trained ML classifier from {self.model_path}: {err}")
+                self.model = None
+
+    def classify(self, signal: np.ndarray) -> Tuple[str, float]:
+        """
+        Classifies digital modulation scheme for a given signal array.
+
+        Parameters:
+            signal: IQ complex array or real amplitude array.
+
+        Returns:
+            Tuple of (detected_modulation_scheme: str, confidence_score: float)
+            where confidence is a float between 0.0 and 1.0.
+        """
+        if signal is None:
+            return "Unknown", 0.0
+
+        arr = np.asarray(signal)
+        if arr.size == 0:
+            return "Unknown", 0.0
+
+        if arr.ndim > 1:
+            arr = arr.flatten()
+
+        arr = np.nan_to_num(arr)
+
+        # 1. Use ML Model if loaded
+        if self.model is not None:
+            try:
+                from param_estimation.train_classifier import extract_signal_features
+                features = extract_signal_features(arr).reshape(1, -1)
+                pred_class = self.model.predict(features)[0]
+                probs = self.model.predict_proba(features)[0]
+                confidence = float(np.max(probs))
+                return str(pred_class), confidence
+            except Exception:
+                pass
+
+        # 2. Constellation / Cumulants template matching
+        i_data = np.real(arr)
+        q_data = np.imag(arr)
+
+        mod_type, confidence = detect_modulation_type(i_data, q_data)
+        return mod_type, float(confidence)
+

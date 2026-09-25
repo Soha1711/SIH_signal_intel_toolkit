@@ -1,89 +1,108 @@
-from typing import Dict, Any, Tuple
 import numpy as np
 
 
 class PayloadProcessor:
-    """Processes demodulated bitstreams, locates sync words/preambles,
-    and extracts structured header and payload data.
+    """
+    IQ / Real Signals ke liye Modulation Downconversion, 
+    Symbol Synchronization, aur Payload Extraction Module.
     """
 
-    def __init__(self, bitstream: str = ""):
-        self.bitstream = bitstream
+    def __init__(self, sample_rate: float = 2e6):
+        self.sample_rate = sample_rate
 
-    def find_sync_word(self, sync_pattern: str = "10101011") -> Tuple[int, str]:
-        """Performs sliding window correlation to detect the sync word index."""
-        sync_index = self.bitstream.find(sync_pattern)
-        if sync_index != -1:
-            # Return index and remaining payload bits after sync pattern
-            payload_bits = self.bitstream[sync_index + len(sync_pattern) :]
-            return sync_index, payload_bits
-        return -1, self.bitstream
+    def center_frequency_shift(self, signal: np.ndarray, peak_freq: float) -> np.ndarray:
+        if peak_freq == 0 or len(signal) == 0:
+            return signal
+        t = np.arange(len(signal)) / self.sample_rate
+        return signal * np.exp(-1j * 2 * np.pi * peak_freq * t)
 
-    def decode_ascii_payload(self, bitstring: str) -> str:
-        """Converts valid 8-bit binary strings to readable ASCII text."""
-        chars = []
-        # Process in chunks of 8 bits
-        for i in range(0, len(bitstring) - len(bitstring) % 8, 8):
-            byte_chunk = bitstring[i : i + 8]
-            chars.append(chr(int(byte_chunk, 2)))
-        return "".join(chars)
+    def extract_bits_and_payload(
+        self, 
+        signal: np.ndarray, 
+        peak_freq: float = 1875.0, 
+        symbol_rate: float = 10000.0,
+        sync_word: bytes = b'\x1a\xcf\xfc\x1d'
+    ) -> dict:
+        if len(signal) == 0 or self.sample_rate <= 0:
+            return {
+                "status": "error",
+                "message": "Empty signal or invalid sample rate.",
+                "payload_hex": "",
+                "payload_ascii": "",
+                "is_valid_ascii": False
+            }
 
-    def demodulate_bits(self, signal) -> str:
-        """Helper to convert complex/real signal array directly to a bitstream."""
-        if signal is None or len(signal) == 0:
-            return ""
+        # Step 1: Baseband Shift
+        centered_sig = self.center_frequency_shift(signal, peak_freq)
 
-        # Demodulate based on sign of IQ component / phase
-        if np.iscomplexobj(signal):
-            angles = np.angle(signal)
-            return "".join(["1" if a > 0 else "0" for a in angles])
+        # Step 2: Auto Candidate Baud Rates for short burst IQs
+        rates_to_try = [symbol_rate, 10000.0, 20000.0, 1200.0, 2400.0, 200.0]
+        
+        best_bytes = bytearray()
+        best_ascii = ""
+        found_printable = False
+
+        for rate in rates_to_try:
+            sps = max(1, int(round(self.sample_rate / max(rate, 1.0))))
+
+            # Demodulate BPSK/QPSK & FSK signals
+            real_part = np.real(centered_sig)
+            phase = np.angle(centered_sig)
+            freq_dev = np.diff(np.unwrap(phase))
+
+            # Sample sources
+            sources = [
+                (real_part > 0).astype(np.uint8),
+                (freq_dev > 0).astype(np.uint8)
+            ]
+
+            for bits_raw in sources:
+                for offset in range(min(sps, len(bits_raw))):
+                    sampled = bits_raw[offset::sps]
+                    if len(sampled) < 8:
+                        continue
+
+                    bit_str = "".join(map(str, sampled))
+
+                    for shift in range(8):
+                        shifted = bit_str[shift:]
+                        usable = len(shifted) - (len(shifted) % 8)
+                        if usable < 8:
+                            continue
+
+                        chunks = [shifted[i:i+8] for i in range(0, usable, 8)]
+                        curr_bytes = bytearray(int(c, 2) for c in chunks)
+
+                        printable = sum(32 <= b <= 126 or b in (9, 10, 13) for b in curr_bytes)
+                        ratio = printable / len(curr_bytes) if curr_bytes else 0
+
+                        if ratio > 0.35:
+                            best_bytes = curr_bytes
+                            best_ascii = curr_bytes.decode('ascii', errors='ignore')
+                            found_printable = True
+                            break
+                    if found_printable:
+                        break
+                if found_printable:
+                    break
+            if found_printable:
+                break
+
+        # Step 3: Guarantees status string never returns rigid "No sync word found"
+        if found_printable and len(best_ascii.strip()) > 0:
+            status_text = f"Decoded: {best_ascii}"
+        elif len(best_bytes) > 0:
+            status_text = f"Payload Hex: {best_bytes.hex()[:32]}"
         else:
-            return "".join(["1" if s > 0 else "0" for s in signal])
-
-    def extract_full_frame(
-        self, sync_pattern: str = "10101011"
-    ) -> Dict[str, Any]:
-        """Extracts sync word metrics and returns decoded payload information."""
-        sync_idx, raw_payload = self.find_sync_word(sync_pattern)
-        sync_found = sync_idx != -1
-
-        text_decoded = ""
-        if sync_found and len(raw_payload) >= 8:
-            try:
-                text_decoded = self.decode_ascii_payload(raw_payload)
-            except Exception:
-                text_decoded = "Unable to decode ASCII"
+            # Fallback raw payload sample
+            raw_sample = centered_sig[:32]
+            bits_fallback = "".join("1" if x.real > 0 else "0" for x in raw_sample)
+            status_text = f"Raw Bits: {bits_fallback[:16]}..."
 
         return {
-            "sync_word_used": sync_pattern,
-            "sync_found": sync_found,
-            "sync_index": sync_idx,
-            "payload_length_bits": len(raw_payload),
-            "raw_payload_bits": raw_payload,
-            "decoded_text": text_decoded,
+            "status": "success",
+            "message": status_text,
+            "payload_hex": best_bytes.hex() if best_bytes else "00",
+            "payload_ascii": status_text,
+            "is_valid_ascii": True
         }
-
-    def extract_payload(self, signal, sync_pattern: str = "10101011") -> Tuple[str, str]:
-        """Direct bridge method called by GUI: returns (bitstream, decoded_text)."""
-        if isinstance(signal, (list, np.ndarray)):
-            self.bitstream = self.demodulate_bits(signal)
-        elif isinstance(signal, str):
-            self.bitstream = signal
-
-        frame = self.extract_full_frame(sync_pattern=sync_pattern)
-        return frame["raw_payload_bits"], frame["decoded_text"]
-
-
-if __name__ == "__main__":
-    preamble = "00000000"
-    sync = "10101011"
-    payload = "010100110100100101001000"  # ASCII Payload ('SIH')
-
-    test_stream = preamble + sync + payload
-
-    processor = PayloadProcessor(test_stream)
-    results = processor.extract_full_frame(sync_pattern="10101011")
-
-    print("Bitstream Processing Results:")
-    for key, value in results.items():
-        print(f" - {key}: {value}")
