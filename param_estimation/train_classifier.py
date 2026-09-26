@@ -16,42 +16,79 @@ from sklearn.metrics import classification_report, accuracy_score
 
 def extract_signal_features(iq_signal: np.ndarray) -> np.array:
     """
-    Extracts statistical & higher-order cumulant features from IQ signal.
+    Extract statistical, higher-order cumulant,
+    and spectral features from IQ signal.
+
+    m21 is intentionally excluded from the final
+    feature vector because power normalization makes
+    it approximately constant across samples.
     """
+
     # Normalize signal power
-    iq_signal = iq_signal / np.sqrt(np.mean(np.abs(iq_signal) ** 2) + 1e-12)
+    iq_signal = iq_signal / np.sqrt(
+        np.mean(np.abs(iq_signal) ** 2) + 1e-12
+    )
 
     amp = np.abs(iq_signal)
     phase = np.angle(iq_signal)
 
+    # ---------------------------------------------------------
     # 1. Basic Statistical Moments
+    # ---------------------------------------------------------
+
     mean_amp = np.mean(amp)
     std_amp = np.std(amp)
     var_amp = np.var(amp)
     std_phase = np.std(phase)
 
+    # ---------------------------------------------------------
     # 2. Moments & Cumulants
+    # ---------------------------------------------------------
+
     m20 = np.mean(iq_signal ** 2)
     m21 = np.mean(np.abs(iq_signal) ** 2)
     m40 = np.mean(iq_signal ** 4)
-    m42 = np.mean((np.abs(iq_signal) ** 2) * (iq_signal ** 2))
+    m42 = np.mean(
+        (np.abs(iq_signal) ** 2) * (iq_signal ** 2)
+    )
 
-    # Higher-Order Cumulants
+    # Higher-order cumulants
     c40 = m40 - 3 * (m20 ** 2)
-    c42 = m42 - np.abs(m20) ** 2 - 2 * (m21 ** 2)
+
+    c42 = (
+        m42
+        - np.abs(m20) ** 2
+        - 2 * (m21 ** 2)
+    )
 
     abs_c40 = np.abs(c40)
     abs_c42 = np.abs(c42)
 
+    # ---------------------------------------------------------
     # 3. Spectral Features
+    # ---------------------------------------------------------
+
     fft_vals = np.abs(np.fft.fft(iq_signal))
+
     spectral_std = np.std(fft_vals)
     spectral_max = np.max(fft_vals)
 
+    # ---------------------------------------------------------
+    # Final feature vector
+    #
+    # m21 is intentionally NOT included.
+    # ---------------------------------------------------------
+
     return np.array([
-        mean_amp, std_amp, var_amp, std_phase,
-        np.abs(m20), m21, abs_c40, abs_c42,
-        spectral_std, spectral_max
+        mean_amp,
+        std_amp,
+        var_amp,
+        std_phase,
+        np.abs(m20),
+        abs_c40,
+        abs_c42,
+        spectral_std,
+        spectral_max
     ])
 
 
