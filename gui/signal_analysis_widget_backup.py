@@ -1,6 +1,6 @@
 """
 SIH 2026
-Signal Analysis GUI Widget
+Signal Analysis Dashboard
 
 Displays:
 1. Time-Domain I/Q Waveform
@@ -12,13 +12,10 @@ Displays:
 
 import numpy as np
 
-from scipy.signal import spectrogram
-
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QGroupBox,
-    QSizePolicy,
+    QTabWidget,
 )
 
 from matplotlib.backends.backend_qtagg import (
@@ -26,6 +23,7 @@ from matplotlib.backends.backend_qtagg import (
 )
 
 from matplotlib.figure import Figure
+from scipy.signal import spectrogram
 
 
 class SignalAnalysisWidget(QWidget):
@@ -36,123 +34,162 @@ class SignalAnalysisWidget(QWidget):
 
         self.setup_ui()
 
-    # ============================================================
-    # CREATE GUI
-    # ============================================================
+    # =========================================================
+    # CREATE DASHBOARD
+    # =========================================================
 
     def setup_ui(self):
 
-        outer_layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
 
-        # --------------------------------------------------------
-        # SIGNAL ANALYSIS GROUP
-        # --------------------------------------------------------
+        # -----------------------------------------------------
+        # TABS
+        # -----------------------------------------------------
 
-        analysis_group = QGroupBox(
-            "Signal Analysis"
+        self.tabs = QTabWidget()
+
+        # Create five graph pages
+
+        self.waveform_page = QWidget()
+        self.fft_page = QWidget()
+        self.psd_page = QWidget()
+        self.waterfall_page = QWidget()
+        self.constellation_page = QWidget()
+
+        # Add tabs
+
+        self.tabs.addTab(
+            self.waveform_page,
+            "Waveform"
         )
 
-        analysis_layout = QVBoxLayout()
-
-        analysis_layout.setSpacing(20)
-
-        # ========================================================
-        # ROW 1: WAVEFORM + FFT + PSD (side by side)
-        # ========================================================
-
-        self.row1_figure = Figure(
-            figsize=(12, 3.5)
+        self.tabs.addTab(
+            self.fft_page,
+            "FFT / Spectrum"
         )
 
-        self.row1_canvas = FigureCanvas(
-            self.row1_figure
+        self.tabs.addTab(
+            self.psd_page,
+            "PSD"
         )
 
-        self.row1_canvas.setMinimumHeight(300)
-        self.row1_canvas.setFixedHeight(300)
-
-        self.row1_canvas.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed
+        self.tabs.addTab(
+            self.waterfall_page,
+            "Waterfall"
         )
 
-        analysis_layout.addWidget(
-            self.row1_canvas
+        self.tabs.addTab(
+            self.constellation_page,
+            "Constellation"
         )
 
-        # ========================================================
-        # 4. WATERFALL
-        # ========================================================
+        # -----------------------------------------------------
+        # CREATE FIGURES
+        # -----------------------------------------------------
+
+        self.waveform_figure = Figure(
+            figsize=(9, 5)
+        )
+
+        self.waveform_canvas = FigureCanvas(
+            self.waveform_figure
+        )
+
+        waveform_layout = QVBoxLayout(
+            self.waveform_page
+        )
+
+        waveform_layout.addWidget(
+            self.waveform_canvas
+        )
+
+        # -----------------------------------------------------
+
+        self.fft_figure = Figure(
+            figsize=(9, 5)
+        )
+
+        self.fft_canvas = FigureCanvas(
+            self.fft_figure
+        )
+
+        fft_layout = QVBoxLayout(
+            self.fft_page
+        )
+
+        fft_layout.addWidget(
+            self.fft_canvas
+        )
+
+        # -----------------------------------------------------
+
+        self.psd_figure = Figure(
+            figsize=(9, 5)
+        )
+
+        self.psd_canvas = FigureCanvas(
+            self.psd_figure
+        )
+
+        psd_layout = QVBoxLayout(
+            self.psd_page
+        )
+
+        psd_layout.addWidget(
+            self.psd_canvas
+        )
+
+        # -----------------------------------------------------
 
         self.waterfall_figure = Figure(
-            figsize=(10, 4)
+            figsize=(9, 5)
         )
 
         self.waterfall_canvas = FigureCanvas(
             self.waterfall_figure
         )
 
-        self.waterfall_canvas.setMinimumHeight(350)
-        self.waterfall_canvas.setFixedHeight(350)
-
-        self.waterfall_canvas.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed
+        waterfall_layout = QVBoxLayout(
+            self.waterfall_page
         )
 
-        analysis_layout.addWidget(
+        waterfall_layout.addWidget(
             self.waterfall_canvas
         )
 
-        # ========================================================
-        # 5. CONSTELLATION
-        # ========================================================
+        # -----------------------------------------------------
 
         self.constellation_figure = Figure(
-            figsize=(10, 8)
+            figsize=(9, 5)
         )
 
         self.constellation_canvas = FigureCanvas(
             self.constellation_figure
         )
 
-        self.constellation_canvas.setMinimumHeight(700)
-        self.constellation_canvas.setFixedHeight(700)
-
-        self.constellation_canvas.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed
+        constellation_layout = QVBoxLayout(
+            self.constellation_page
         )
 
-        analysis_layout.addWidget(
+        constellation_layout.addWidget(
             self.constellation_canvas
         )
 
-        # --------------------------------------------------------
-        # SET ANALYSIS GROUP
-        # --------------------------------------------------------
+        # -----------------------------------------------------
+        # ADD TABS TO MAIN LAYOUT
+        # -----------------------------------------------------
 
-        analysis_group.setLayout(
-            analysis_layout
-        )
-
-        outer_layout.addWidget(
-            analysis_group
+        main_layout.addWidget(
+            self.tabs
         )
 
         self.setLayout(
-            outer_layout
+            main_layout
         )
 
-        # Ensure the widget requests enough height
-        # so the outer scroll area can scroll to
-        # the constellation diagram.
-        # (300 + 350 + 700 + spacing + group padding)
-        self.setMinimumHeight(1450)
-
-    # ============================================================
+    # =========================================================
     # DISPLAY ALL ANALYSIS
-    # ============================================================
+    # =========================================================
 
     def display_analysis(self, result):
 
@@ -162,253 +199,197 @@ class SignalAnalysisWidget(QWidget):
 
             return
 
-        self.plot_row1(
-            result
-        )
+        self.plot_waveform(result)
 
-        self.plot_waterfall(
-            result
-        )
+        self.plot_fft(result)
 
-        self.plot_constellation(
-            result
-        )
+        self.plot_psd(result)
 
-    # ============================================================
-    # ROW 1: WAVEFORM + FFT + PSD (side by side)
-    # ============================================================
+        self.plot_waterfall(result)
 
-    def plot_row1(self, result):
+        self.plot_constellation(result)
 
-        self.row1_figure.clear()
+    # =========================================================
+    # 1. WAVEFORM
+    # =========================================================
 
-        # --------------------------------------------------------
-        # 1. WAVEFORM (left)
-        # --------------------------------------------------------
+    def plot_waveform(self, result):
 
-        ax1 = self.row1_figure.add_subplot(
-            1, 3, 1
-        )
+        self.waveform_figure.clear()
 
-        time = result[
+        ax = self.waveform_figure.add_subplot(111)
+
+        time = result.get(
             "waveform_time"
-        ]
+        )
 
-        i_data = result[
+        i_data = result.get(
             "waveform_i"
-        ]
+        )
 
-        q_data = result[
+        q_data = result.get(
             "waveform_q"
-        ]
+        )
 
-        time_ms = time * 1000
+        if time is None:
 
-        ax1.plot(
-            time_ms,
+            signal = np.asarray(
+                result["samples"]
+            )
+
+            sample_rate = float(
+                result["sample_rate"]
+            )
+
+            max_points = min(
+                len(signal),
+                5000
+            )
+
+            signal = signal[:max_points]
+
+            time = (
+                np.arange(
+                    len(signal)
+                )
+                / sample_rate
+            )
+
+            i_data = np.real(signal)
+
+            q_data = np.imag(signal)
+
+        ax.plot(
+            time,
             i_data,
-            label="I (In-phase)",
-            linewidth=0.8
+            label="I"
         )
 
-        ax1.plot(
-            time_ms,
+        ax.plot(
+            time,
             q_data,
-            label="Q (Quadrature)",
-            linewidth=0.8
+            label="Q"
         )
 
-        ax1.set_title(
-            "1. Time-Domain I/Q Waveform",
-            fontsize=10,
-            fontweight="bold"
+        ax.set_title(
+            "Time-Domain I/Q Waveform"
         )
 
-        ax1.set_xlabel(
-            "Time (ms)",
-            fontsize=8
+        ax.set_xlabel(
+            "Time (seconds)"
         )
 
-        ax1.set_ylabel(
-            "Amplitude",
-            fontsize=8
+        ax.set_ylabel(
+            "Amplitude"
         )
 
-        ax1.tick_params(
-            labelsize=7
-        )
+        ax.grid(True)
 
-        ax1.grid(
-            True,
-            alpha=0.3
-        )
+        ax.legend()
 
-        ax1.legend(
-            fontsize=7,
-            loc="lower right"
-        )
+        self.waveform_figure.tight_layout()
 
-        # --------------------------------------------------------
-        # 2. FFT (center)
-        # --------------------------------------------------------
+        self.waveform_canvas.draw()
 
-        ax2 = self.row1_figure.add_subplot(
-            1, 3, 2
-        )
+    # =========================================================
+    # 2. FFT
+    # =========================================================
 
-        frequency = result[
+    def plot_fft(self, result):
+
+        self.fft_figure.clear()
+
+        ax = self.fft_figure.add_subplot(111)
+
+        frequencies = result.get(
             "fft_frequency"
-        ]
+        )
 
-        magnitude_db = result[
+        magnitude = result.get(
             "fft_magnitude_db"
-        ]
-
-        frequency_khz = (
-            frequency / 1000
         )
 
-        ax2.plot(
-            frequency_khz,
-            magnitude_db,
-            linewidth=0.8
+        if frequencies is None:
+
+            return
+
+        ax.plot(
+            frequencies,
+            magnitude
         )
 
-        ax2.set_title(
-            "2. FFT / Magnitude Spectrum",
-            fontsize=10,
-            fontweight="bold"
+        ax.set_title(
+            "FFT / Magnitude Spectrum"
         )
 
-        ax2.set_xlabel(
-            "Frequency (kHz)",
-            fontsize=8
+        ax.set_xlabel(
+            "Frequency (Hz)"
         )
 
-        ax2.set_ylabel(
-            "Magnitude (dB)",
-            fontsize=8
+        ax.set_ylabel(
+            "Magnitude (dB)"
         )
 
-        ax2.tick_params(
-            labelsize=7
-        )
+        ax.grid(True)
 
-        ax2.grid(
-            True,
-            alpha=0.3
-        )
+        self.fft_figure.tight_layout()
 
-        peak_frequency = result[
-            "peak_frequency"
-        ]
+        self.fft_canvas.draw()
 
-        peak_index = np.argmax(
-            magnitude_db
-        )
+    # =========================================================
+    # 3. PSD
+    # =========================================================
 
-        peak_magnitude = (
-            magnitude_db[
-                peak_index
-            ]
-        )
+    def plot_psd(self, result):
 
-        ax2.scatter(
-            peak_frequency / 1000,
-            peak_magnitude,
-            zorder=5,
-            s=30
-        )
+        self.psd_figure.clear()
 
-        ax2.annotate(
-            f"Peak: "
-            f"{peak_frequency / 1000:.2f} kHz",
-            (
-                peak_frequency / 1000,
-                peak_magnitude
-            ),
-            xytext=(10, 10),
-            textcoords="offset points",
-            fontsize=7
-        )
+        ax = self.psd_figure.add_subplot(111)
 
-        # --------------------------------------------------------
-        # 3. PSD (right)
-        # --------------------------------------------------------
-
-        ax3 = self.row1_figure.add_subplot(
-            1, 3, 3
-        )
-
-        psd_frequency = result[
+        frequencies = result.get(
             "psd_frequency"
-        ]
+        )
 
-        psd_db = result[
+        psd = result.get(
             "psd_db"
-        ]
-
-        psd_frequency_khz = (
-            psd_frequency / 1000
         )
 
-        ax3.plot(
-            psd_frequency_khz,
-            psd_db,
-            linewidth=0.8
+        if frequencies is None:
+
+            return
+
+        ax.plot(
+            frequencies,
+            psd
         )
 
-        ax3.set_title(
-            "3. Power Spectral Density (PSD)",
-            fontsize=10,
-            fontweight="bold"
+        ax.set_title(
+            "Power Spectral Density"
         )
 
-        ax3.set_xlabel(
-            "Frequency (kHz)",
-            fontsize=8
+        ax.set_xlabel(
+            "Frequency (Hz)"
         )
 
-        ax3.set_ylabel(
-            "PSD (dB/Hz)",
-            fontsize=8
+        ax.set_ylabel(
+            "Power (dB/Hz)"
         )
 
-        ax3.tick_params(
-            labelsize=7
-        )
+        ax.grid(True)
 
-        ax3.grid(
-            True,
-            alpha=0.3
-        )
+        self.psd_figure.tight_layout()
 
-        # --------------------------------------------------------
-        # Layout
-        # --------------------------------------------------------
+        self.psd_canvas.draw()
 
-        self.row1_figure.tight_layout(
-            pad=2.0,
-            w_pad=3.0
-        )
-
-        self.row1_canvas.draw()
-
-    # ============================================================
-    # 4. WATERFALL
-    # ============================================================
+    # =========================================================
+    # 4. WATERFALL / SPECTROGRAM
+    # =========================================================
 
     def plot_waterfall(self, result):
 
         self.waterfall_figure.clear()
 
-        ax = self.waterfall_figure.add_subplot(
-            111
-        )
-
-        # --------------------------------------------------------
-        # Get signal
-        # --------------------------------------------------------
+        ax = self.waterfall_figure.add_subplot(111)
 
         signal = np.asarray(
             result["samples"]
@@ -418,11 +399,9 @@ class SignalAnalysisWidget(QWidget):
             result["sample_rate"]
         )
 
-        # --------------------------------------------------------
-        # Limit signal size
-        # --------------------------------------------------------
+        # Limit data for GUI performance
 
-        max_samples = 500000
+        max_samples = 200000
 
         if len(signal) > max_samples:
 
@@ -430,21 +409,16 @@ class SignalAnalysisWidget(QWidget):
                 :max_samples
             ]
 
-        # --------------------------------------------------------
-        # Spectrogram
-        # --------------------------------------------------------
+        if len(signal) < 32:
 
-        nperseg = min(
-            2048,
-            len(signal)
-        )
-
-        if nperseg < 16:
+            ax.set_title(
+                "Waterfall / Spectrogram"
+            )
 
             ax.text(
                 0.5,
                 0.5,
-                "Not enough samples for waterfall",
+                "Not enough samples",
                 ha="center",
                 va="center"
             )
@@ -453,391 +427,173 @@ class SignalAnalysisWidget(QWidget):
 
             return
 
-        frequencies, times, spectrum = spectrogram(
+        # Spectrogram
+
+        frequencies, times, power = spectrogram(
             signal,
             fs=sample_rate,
-            window="hann",
-            nperseg=nperseg,
-            noverlap=nperseg // 2,
+            nperseg=min(
+                1024,
+                len(signal)
+            ),
+            noverlap=min(
+                768,
+                len(signal) // 2
+            ),
             return_onesided=False,
             mode="magnitude"
         )
 
-        # --------------------------------------------------------
-        # Center frequency axis
-        # --------------------------------------------------------
+        # Shift zero frequency to center
 
         frequencies = np.fft.fftshift(
             frequencies
         )
 
-        spectrum = np.fft.fftshift(
-            spectrum,
+        power = np.fft.fftshift(
+            power,
             axes=0
         )
 
-        # --------------------------------------------------------
-        # Convert to dB
-        # --------------------------------------------------------
-
-        spectrum_db = (
+        power_db = (
             20
             * np.log10(
-                spectrum + 1e-12
+                power + 1e-12
             )
         )
 
-        # --------------------------------------------------------
-        # Plot
-        # --------------------------------------------------------
-
         mesh = ax.pcolormesh(
             times,
-            frequencies / 1000,
-            spectrum_db,
+            frequencies,
+            power_db,
             shading="auto"
-        )
-
-        ax.set_title(
-            "4. Waterfall / Spectrogram",
-            fontsize=13,
-            fontweight="bold"
-        )
-
-        ax.set_xlabel(
-            "Time (s)"
-        )
-
-        ax.set_ylabel(
-            "Frequency (kHz)"
         )
 
         self.waterfall_figure.colorbar(
             mesh,
             ax=ax,
-            label="Power (dB)"
+            label="Magnitude (dB)"
+        )
+
+        ax.set_title(
+            "Waterfall / Spectrogram"
+        )
+
+        ax.set_xlabel(
+            "Time (seconds)"
+        )
+
+        ax.set_ylabel(
+            "Frequency (Hz)"
         )
 
         self.waterfall_figure.tight_layout()
 
         self.waterfall_canvas.draw()
 
-    # ============================================================
+    # =========================================================
     # 5. CONSTELLATION
-    # ============================================================
+    # =========================================================
 
     def plot_constellation(self, result):
 
         self.constellation_figure.clear()
 
-        from matplotlib.gridspec import GridSpec
+        ax = self.constellation_figure.add_subplot(111)
 
-        from param_estimation.modulation_classifier import (
-            get_ideal_constellation,
-            MODULATION_TYPES,
-            MODULATION_INFO,
+        signal = np.asarray(
+            result["samples"]
         )
 
-        # --------------------------------------------------------
-        # Layout: main constellation + 5 reference types
-        # --------------------------------------------------------
+        if len(signal) == 0:
 
-        gs = GridSpec(
-            2,
-            5,
-            figure=self.constellation_figure,
-            height_ratios=[2.5, 1],
-            hspace=0.55,
-            wspace=0.5
+            return
+
+        # Limit number of points
+
+        max_points = 10000
+
+        if len(signal) > max_points:
+
+            indices = np.linspace(
+                0,
+                len(signal) - 1,
+                max_points
+            ).astype(int)
+
+            signal = signal[
+                indices
+            ]
+
+        i_data = np.real(
+            signal
         )
 
-        # ========================================================
-        # MAIN CONSTELLATION (top, center 3 columns)
-        # ========================================================
-
-        ax_main = self.constellation_figure.add_subplot(
-            gs[0, 1:4]
+        q_data = np.imag(
+            signal
         )
 
-        # --------------------------------------------------------
-        # Get constellation data
-        # --------------------------------------------------------
-
-        if (
-            "constellation_i" in result
-            and "constellation_q" in result
-        ):
-
-            i_data = np.asarray(
-                result["constellation_i"]
-            )
-
-            q_data = np.asarray(
-                result["constellation_q"]
-            )
-
-        else:
-
-            signal = np.asarray(
-                result["samples"]
-            )
-
-            max_points = 10000
-
-            if len(signal) > max_points:
-
-                step = max(
-                    1,
-                    len(signal) // max_points
-                )
-
-                signal = signal[::step]
-
-            i_data = np.real(signal)
-            q_data = np.imag(signal)
-
-        # --------------------------------------------------------
-        # Plot signal constellation points
-        # --------------------------------------------------------
-
-        ax_main.scatter(
+        ax.scatter(
             i_data,
             q_data,
-            s=5,
-            alpha=0.6,
-            label="Signal",
-            zorder=3
+            s=4,
+            alpha=0.5
         )
 
-        # --------------------------------------------------------
-        # Get detected modulation type
-        # --------------------------------------------------------
-
-        detected_type = result.get(
-            "detected_modulation",
-            "Unknown"
-        )
-
-        confidence = result.get(
-            "modulation_confidence",
-            0.0
-        )
-
-        # --------------------------------------------------------
-        # Overlay ideal constellation points
-        # --------------------------------------------------------
-
-        if detected_type != "Unknown":
-
-            ideal = get_ideal_constellation(
-                detected_type
-            )
-
-            if ideal is not None:
-
-                max_amp = max(
-                    np.max(np.abs(i_data))
-                    if len(i_data) > 0
-                    else 1.0,
-                    np.max(np.abs(q_data))
-                    if len(q_data) > 0
-                    else 1.0
-                )
-
-                if max_amp > 0:
-                    ideal_scaled = ideal * max_amp
-                else:
-                    ideal_scaled = ideal
-
-                ax_main.scatter(
-                    np.real(ideal_scaled),
-                    np.imag(ideal_scaled),
-                    s=120,
-                    marker="x",
-                    c="red",
-                    linewidths=2.5,
-                    zorder=10,
-                    label=(
-                        f"Ideal {detected_type}"
-                    )
-                )
-
-        # --------------------------------------------------------
-        # Reference axes
-        # --------------------------------------------------------
-
-        ax_main.axhline(
+        ax.axhline(
             0,
-            linewidth=0.8,
-            color="gray"
+            linewidth=0.8
         )
 
-        ax_main.axvline(
+        ax.axvline(
             0,
-            linewidth=0.8,
-            color="gray"
+            linewidth=0.8
         )
 
-        # --------------------------------------------------------
-        # Title with detection result
-        # --------------------------------------------------------
-
-        title_text = (
-            "5. Constellation Diagram"
+        ax.set_title(
+            "I/Q Constellation Diagram"
         )
 
-        if detected_type != "Unknown":
-
-            title_text += (
-                f"\nDetected: {detected_type}"
-                f" (Confidence:"
-                f" {confidence:.0%})"
-            )
-
-        ax_main.set_title(
-            title_text,
-            fontsize=13,
-            fontweight="bold"
+        ax.set_xlabel(
+            "In-Phase (I)"
         )
 
-        ax_main.set_xlabel(
-            "I (In-phase)"
+        ax.set_ylabel(
+            "Quadrature (Q)"
         )
 
-        ax_main.set_ylabel(
-            "Q (Quadrature)"
-        )
+        ax.grid(True)
 
-        ax_main.grid(
-            True,
-            alpha=0.3
-        )
-
-        ax_main.set_aspect(
+        ax.set_aspect(
             "equal",
             adjustable="box"
         )
-
-        ax_main.legend(
-            fontsize=8,
-            loc="upper right"
-        )
-
-        # ========================================================
-        # REFERENCE CONSTELLATION TYPES (bottom row)
-        # ========================================================
-
-        ref_colors = {
-            "BPSK":   "#2196F3",
-            "QPSK":   "#9C27B0",
-            "8-PSK":  "#FF9800",
-            "16-QAM": "#E91E63",
-            "64-QAM": "#009688",
-        }
-
-        for idx, mod_type in enumerate(
-            MODULATION_TYPES
-        ):
-
-            ax_ref = (
-                self.constellation_figure
-                .add_subplot(gs[1, idx])
-            )
-
-            ideal = get_ideal_constellation(
-                mod_type
-            )
-
-            if ideal is not None:
-
-                color = ref_colors.get(
-                    mod_type,
-                    "blue"
-                )
-
-                ax_ref.scatter(
-                    np.real(ideal),
-                    np.imag(ideal),
-                    s=30,
-                    c=color,
-                    zorder=5
-                )
-
-            # Reference axes
-            ax_ref.axhline(
-                0,
-                linewidth=0.5,
-                color="gray",
-                alpha=0.5
-            )
-
-            ax_ref.axvline(
-                0,
-                linewidth=0.5,
-                color="gray",
-                alpha=0.5
-            )
-
-            # Title with modulation info
-            info = MODULATION_INFO[mod_type]
-
-            ax_ref.set_title(
-                (
-                    f"{mod_type}\n"
-                    f"{info['bits_per_symbol']}"
-                    f" bits/symbol"
-                ),
-                fontsize=8,
-                fontweight="bold"
-            )
-
-            ax_ref.set_aspect(
-                "equal",
-                adjustable="box"
-            )
-
-            ax_ref.tick_params(
-                labelsize=6
-            )
-
-            ax_ref.grid(
-                True,
-                alpha=0.2
-            )
-
-            # Highlight detected type with
-            # green border
-            if mod_type == detected_type:
-
-                for spine in (
-                    ax_ref.spines.values()
-                ):
-                    spine.set_edgecolor(
-                        "#4CAF50"
-                    )
-                    spine.set_linewidth(3)
-
-        # --------------------------------------------------------
-        # Final layout
-        # --------------------------------------------------------
 
         self.constellation_figure.tight_layout()
 
         self.constellation_canvas.draw()
 
-    # ============================================================
-    # CLEAR GRAPHS
-    # ============================================================
+    # =========================================================
+    # CLEAR PLOTS
+    # =========================================================
 
     def clear_plots(self):
 
-        self.row1_figure.clear()
+        self.waveform_figure.clear()
+
+        self.fft_figure.clear()
+
+        self.psd_figure.clear()
 
         self.waterfall_figure.clear()
 
         self.constellation_figure.clear()
 
-        self.row1_canvas.draw()
+        self.waveform_canvas.draw()
+
+        self.fft_canvas.draw()
+
+        self.psd_canvas.draw()
 
         self.waterfall_canvas.draw()
 
