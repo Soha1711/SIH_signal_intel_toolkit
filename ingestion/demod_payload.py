@@ -46,9 +46,13 @@ class PayloadProcessor:
             return "".join(["1" if s > 0 else "0" for s in signal])
 
     def find_sync_word(self, sync_pattern: str = "10101011") -> Tuple[int, str]:
-        sync_index = self.bitstream.find(sync_pattern)
-        if sync_index != -1:
-            return sync_index, self.bitstream[sync_index + len(sync_pattern):]
+        from deinterleave_fec.bitstream_correlation import BitstreamCorrelator, FrameParser
+        correlator = BitstreamCorrelator(default_sync_pattern=sync_pattern, confidence_threshold=0.75)
+        corr_res = correlator.correlate(self.bitstream, sync_pattern=sync_pattern)
+        if corr_res.found:
+            parser = FrameParser(header_length_bits=0)
+            frame = parser.split_frame(self.bitstream, corr_res, auto_invert=True)
+            return corr_res.sync_index, frame["payload_bits"]
         return -1, self.bitstream
 
     def decode_ascii_payload(self, bitstring: str) -> str:
