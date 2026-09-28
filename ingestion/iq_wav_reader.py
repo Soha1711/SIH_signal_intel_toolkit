@@ -92,22 +92,14 @@ def read_iq(
     """
     Read raw IQ data.
 
-    For real-valued dtypes, expected format is interleaved:
+    Expected format:
 
         I Q I Q I Q I Q ...
 
-    For complex dtypes (complex64 / complex128), each sample is
-    already a native (I, Q) pair at the byte level, so no manual
-    interleave-splitting is needed.
-
     Supported:
         float32
-        float64
         int16
-        int8
         uint8
-        complex64
-        complex128
     """
 
     filepath = str(filepath)
@@ -119,12 +111,8 @@ def read_iq(
 
     supported_dtypes = {
         "float32": np.float32,
-        "float64": np.float64,
         "int16": np.int16,
-        "int8": np.int8,
         "uint8": np.uint8,
-        "complex64": np.complex64,
-        "complex128": np.complex128,
     }
 
     if dtype not in supported_dtypes:
@@ -142,36 +130,8 @@ def read_iq(
     if raw.size == 0:
         raise ValueError("IQ file is empty.")
 
-    # ------------------------------------------------------------
-    # COMPLEX DTYPES — already (I, Q) pairs, no interleave-splitting
-    # ------------------------------------------------------------
-    if dtype in ("complex64", "complex128"):
-
-        samples = raw.astype(np.complex64)
-
-        num_samples = len(samples)
-
-        duration_sec = num_samples / sample_rate
-
-        return {
-            "samples": samples,
-            "sample_rate": float(sample_rate),
-            "source_format": "iq",
-            "duration_sec": float(duration_sec),
-
-            "num_samples": int(num_samples),
-            "channels": 2,
-            "bit_depth": dtype,
-            "iq_dtype": dtype,
-            "file_name": Path(filepath).name,
-        }
-
-    # ------------------------------------------------------------
-    # REAL-VALUED DTYPES — interleaved I,Q pairs, split and combine
-    # ------------------------------------------------------------
-
     # Convert to float32
-    if dtype in ("float32", "float64"):
+    if dtype == "float32":
 
         raw = raw.astype(np.float32)
 
@@ -181,13 +141,6 @@ def read_iq(
 
         # Scale approximately to [-1, 1]
         raw /= 32768.0
-
-    elif dtype == "int8":
-
-        raw = raw.astype(np.float32)
-
-        # Signed 8-bit range is [-128, 127]; scale approximately to [-1, 1]
-        raw /= 128.0
 
     elif dtype == "uint8":
 
