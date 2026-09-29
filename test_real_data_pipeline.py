@@ -4,7 +4,7 @@ from param_estimation.export_manager import SignalExporter
 from param_estimation.parameter_extractor import ParameterExtractor
 
 
-def test_on_real_file(file_path: str, sample_rate: float = 2000000.0):
+def run_on_real_file(file_path: str, sample_rate: float = 2000000.0):
     if not os.path.exists(file_path):
         print(f"❌ File not found: {file_path}")
         return
@@ -50,4 +50,4 @@ def test_on_real_file(file_path: str, sample_rate: float = 2000000.0):
 
 if __name__ == "__main__":
     sample_file = os.path.join("sample_data", "test_tone.iq")
-    test_on_real_file(sample_file)
+    run_on_real_file(sample_file)

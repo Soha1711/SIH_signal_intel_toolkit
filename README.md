@@ -1,39 +1,52 @@
-# SIH — Automated Signal Intelligence & Demodulation Toolkit
+# AstraWave — Automated Signal Intelligence & Demodulation Toolkit
 
-GUI-based tool that takes a raw `.IQ` or `.WAV` recording and automatically:
-detects signal parameters → demodulates → de-interleaves → FEC-decodes →
-correlates the bitstream to find header/payload structure.
+A GUI-based signal intelligence toolkit that processes raw `.IQ` and `.WAV` recordings and provides an end-to-end workflow for signal analysis, modulation classification, demodulation, error recovery, and payload extraction.
 
-**Team:** Soha (Parameter Extraction + Integration Lead) · Honey (Demodulation) ·
-Tirth (De-interleaving + FEC) · Hrutu & Rahul (GUI + Correlation)
+## Overview
 
-**Project window:** 25 Aug – 20 Sep 2026 · **Internal Hackathon:** 31 Aug 2026
+AstraWave converts raw I/Q recordings into meaningful signal information through an integrated DSP and ML pipeline.
 
-## Pipeline
+The toolkit supports:
 
-```
-File Ingestion → Parameter Estimation → Demodulation → De-interleaving
-→ FEC Decoding → Bitstream Correlation → GUI Output
-```
+- `.IQ` and `.WAV` signal ingestion
+- Common complex I/Q signal representation
+- Signal preprocessing and normalization
+- Sampling and signal parameter analysis
+- FFT, PSD, waterfall, and constellation visualization
+- ML-based modulation classification
+- Confidence-based classification review
+- Manual modulation override
+- Symbol demodulation
+- Block de-interleaving
+- Hamming (7,4) FEC decoding
+- Bitstream synchronization and correlation
+- Frame detection and payload extraction
+- ASCII/text decoding
+- GUI-based visualization and results
 
-## Repo structure
+## System Pipeline
 
-| Folder | Owner | Purpose |
-|---|---|---|
-| `ingestion/` | Soha | Reads `.IQ` / `.WAV`, normalises to common complex-sample array |
-| `param_estimation/` | Soha | Sampling rate, symbol rate, modulation classification, FFT/waterfall |
-| `demodulation/` | Honey | FSK / PSK / QAM demodulators, constellation plots |
-| `deinterleave_fec/` | Tirth | Block/Convolutional/Diagonal/PN de-interleaving, Viterbi/RS/LDPC decoding |
-| `gui/` | Hrutu & Rahul | PyQt5 GUI shell, plot widgets, bitstream correlation, export |
-| `docs/` | All | Interface contracts, architecture notes, PPT source |
-| `sample_data/` | All | Test `.IQ` / `.WAV` files with known parameters |
-| `tests/` | All | Unit tests per module |
-
-## Getting started
-
-See [SETUP.md](SETUP.md) for environment setup.
-See [docs/interface_contract.md](docs/interface_contract.md) for how data passes between modules — read this before writing any module code.
-
-## Status tracking
-
-Progress is tracked on the repo's GitHub Projects board (see Issues/Projects tab).
+```text
+.IQ / .WAV Input
+       ↓
+File Ingestion & Preprocessing
+       ↓
+Signal Analysis & Parameter Estimation
+       ↓
+ML Modulation Classification
+       ↓
+Confidence Gate
+   ↙         ↘
+Auto Accept   Manual Review / Override
+       ↓
+Demodulation
+       ↓
+De-interleaving
+       ↓
+FEC Decoding
+       ↓
+Bitstream Correlation & Framing
+       ↓
+Payload Extraction
+       ↓
+ASCII / Text Output

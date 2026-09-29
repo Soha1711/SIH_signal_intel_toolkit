@@ -147,41 +147,64 @@ def analyze_signal(input_data, sample_rate: float = 2_000_000.0) -> dict:
         _, psd_db = compute_psd(signal, sample_rate)
 
         return {
-            "analysis_status": "success",
-            "peak_frequency_hz": peak_freq_hz,
-            "peak_frequency": peak_freq_hz,
-            "peak_freq": peak_freq_hz,
-            
-            "bandwidth_hz": bandwidth_hz,
-            "bandwidth": bandwidth_hz,
-            "bw": bandwidth_hz,
-            
-            "snr_db": snr_db,
-            "snr": snr_db,
-            
-            "modulation": str(mod_type),
-            "modulation_type": str(mod_type),
-            "predicted_modulation": str(mod_type),
-            
-            "confidence": float(confidence),
-            "confidence_score": float(confidence),
-            "confidence_pct": float(confidence),
-            
-            "signal": signal,
-            "samples": signal,
-            "iq_data": signal,
-            "data": signal,
-            "sample_rate": float(sample_rate),
-            "plot_data": {
-                "freqs": freqs,
-                "fft_db": fft_db,
-                "psd_db": psd_db,
-                "time_i": time_i,
-                "time_q": time_q,
-                "raw_iq": signal,
-                "samples": signal
-            }
-        }
+    "analysis_status": "success",
+
+    # Signal parameters
+    "peak_frequency_hz": peak_freq_hz,
+    "peak_frequency": peak_freq_hz,
+    "peak_freq": peak_freq_hz,
+
+    "bandwidth_hz": bandwidth_hz,
+    "bandwidth": bandwidth_hz,
+    "bw": bandwidth_hz,
+
+    "snr_db": snr_db,
+    "snr": snr_db,
+
+    # Modulation
+    "modulation": str(mod_type),
+    "modulation_type": str(mod_type),
+    "predicted_modulation": str(mod_type),
+
+    "confidence": float(confidence),
+    "confidence_score": float(confidence),
+    "confidence_pct": float(confidence),
+
+    # Original signal
+    "signal": signal,
+    "samples": signal,
+    "iq_data": signal,
+    "data": signal,
+    "sample_rate": float(sample_rate),
+
+    # ------------------------------------------------
+    # GUI / TEST COMPATIBILITY KEYS
+    # ------------------------------------------------
+
+    # Waveform
+    "waveform_time": np.arange(len(time_i)) / float(sample_rate),
+    "waveform_i": time_i,
+    "waveform_q": time_q,
+
+    # FFT
+    "fft_frequency": freqs,
+    "fft_magnitude_db": fft_db,
+
+    # PSD
+    "psd_frequency": freqs,
+    "psd_db": psd_db,
+
+    # Existing plot-data structure
+    "plot_data": {
+        "freqs": freqs,
+        "fft_db": fft_db,
+        "psd_db": psd_db,
+        "time_i": time_i,
+        "time_q": time_q,
+        "raw_iq": signal,
+        "samples": signal
+    }
+}
     except Exception as e:
         return {
             "analysis_status": "error",
