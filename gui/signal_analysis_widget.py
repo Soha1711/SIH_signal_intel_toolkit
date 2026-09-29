@@ -20,6 +20,8 @@ import warnings
 import numpy as np
 from scipy.signal import spectrogram
 
+from PyQt6.QtCore import Qt
+
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -28,6 +30,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QFileDialog,
     QMessageBox,
+    QScrollArea,
 )
 
 from matplotlib.backends.backend_qtagg import (
@@ -47,6 +50,7 @@ class SignalAnalysisWidget(QWidget):
         super().__init__(parent)
 
         self.current_result = None
+        self.pipeline_result = None
 
         self.setup_ui()
 
@@ -61,6 +65,31 @@ class SignalAnalysisWidget(QWidget):
                 figure.tight_layout()
         except Exception:
             pass
+
+    # ============================================================
+    # MATPLOTLIB DARK-THEME HELPERS
+    # ============================================================
+
+    def _style_figure(self, figure):
+        """Keep Matplotlib figures readable inside the dark Qt UI."""
+        figure.patch.set_facecolor("#1e1e1e")
+
+    def _style_axes(self, ax):
+        """Apply consistent dark styling without changing plot data."""
+        ax.set_facecolor("#1e1e1e")
+
+        ax.title.set_color("#e0e0e0")
+        ax.xaxis.label.set_color("#cccccc")
+        ax.yaxis.label.set_color("#cccccc")
+
+        ax.tick_params(
+            axis="both",
+            colors="#cccccc",
+            labelsize=9,
+        )
+
+        for spine in ax.spines.values():
+            spine.set_color("#555555")
 
     # ============================================================
     # CREATE GUI
@@ -116,6 +145,7 @@ class SignalAnalysisWidget(QWidget):
         self.waveform_figure = Figure(
             figsize=(10, 5)
         )
+        self._style_figure(self.waveform_figure)
 
         self.waveform_canvas = FigureCanvas(
             self.waveform_figure
@@ -136,6 +166,7 @@ class SignalAnalysisWidget(QWidget):
         self.fft_figure = Figure(
             figsize=(10, 5)
         )
+        self._style_figure(self.fft_figure)
 
         self.fft_canvas = FigureCanvas(
             self.fft_figure
@@ -156,6 +187,7 @@ class SignalAnalysisWidget(QWidget):
         self.psd_figure = Figure(
             figsize=(10, 5)
         )
+        self._style_figure(self.psd_figure)
 
         self.psd_canvas = FigureCanvas(
             self.psd_figure
@@ -176,6 +208,7 @@ class SignalAnalysisWidget(QWidget):
         self.waterfall_figure = Figure(
             figsize=(10, 5)
         )
+        self._style_figure(self.waterfall_figure)
 
         self.waterfall_canvas = FigureCanvas(
             self.waterfall_figure
@@ -193,19 +226,52 @@ class SignalAnalysisWidget(QWidget):
         # CONSTELLATION FIGURE
         # ========================================================
 
+        # Keep the original compact constellation size.
+        # QScrollArea only becomes scrollable when this fixed-size
+        # canvas is larger than the visible tab area.
         self.constellation_figure = Figure(
-            figsize=(10, 7)
+            figsize=(10, 7),
+            dpi=100
         )
+        self._style_figure(self.constellation_figure)
+
         self.constellation_canvas = FigureCanvas(
             self.constellation_figure
+        )
+
+        # Fixed 1000 x 700 px canvas: do not enlarge the graph just
+        # to force scrolling. The scrollbars appear only when needed.
+        self.constellation_canvas.setMinimumSize(1000, 700)
+        self.constellation_canvas.setMaximumSize(1000, 700)
+        self.constellation_canvas.resize(1000, 700)
+
+        self.constellation_scroll_area = QScrollArea()
+        self.constellation_scroll_area.setWidgetResizable(False)
+        self.constellation_scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.constellation_scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.constellation_scroll_area.setWidget(
+            self.constellation_canvas
+        )
+
+        # Normal mouse wheel = vertical scrolling.
+        # Shift + mouse wheel = horizontal scrolling.
+        # QScrollArea already supports dragging/clicking its scrollbars.
+        self.constellation_scroll_area.setFocusPolicy(
+            Qt.FocusPolicy.StrongFocus
         )
 
         constellation_layout = QVBoxLayout(
             self.constellation_page
         )
+        constellation_layout.setContentsMargins(0, 0, 0, 0)
+        constellation_layout.setSpacing(0)
 
         constellation_layout.addWidget(
-            self.constellation_canvas
+            self.constellation_scroll_area
         )
 
         # ========================================================
@@ -219,6 +285,14 @@ class SignalAnalysisWidget(QWidget):
         self.setLayout(
             main_layout
         )
+
+    # ============================================================
+    # PIPELINE RESULT INTEGRATION
+    # ============================================================
+
+    def set_pipeline_result(self, pipeline_result):
+        """Store the authoritative full-pipeline result for display."""
+        self.pipeline_result = pipeline_result or {}
 
     # ============================================================
     # PROCESS SIGNAL & DISPLAY (PIPELINE CALL)
@@ -266,27 +340,47 @@ class SignalAnalysisWidget(QWidget):
 
             return
 
+        # Preserve the independent GUI/visual estimate.
+        if "constellation_modulation" not in result:
+            result["constellation_modulation"] = result.get(
+                "detected_modulation",
+                result.get("modulation", "Unknown")
+            )
+            result["constellation_confidence"] = result.get(
+                "modulation_confidence",
+                result.get("confidence", 0.0)
+            )
+
+        # The full pipeline is authoritative when supplied.
+        pipeline = result.get("pipeline_result") or self.pipeline_result
+
+        if pipeline:
+            pipeline_mod = pipeline.get(
+                "modulation_type",
+                pipeline.get("modulation")
+            )
+            pipeline_conf = pipeline.get(
+                "confidence",
+                pipeline.get("modulation_confidence")
+            )
+
+            if pipeline_mod:
+                result["pipeline_modulation"] = pipeline_mod
+                result["pipeline_confidence"] = pipeline_conf
+                result["pipeline_modulation_source"] = pipeline.get(
+                    "modulation_source",
+                    "classifier"
+                )
+                result["detected_modulation"] = pipeline_mod
+                result["modulation_confidence"] = pipeline_conf
+
         self.current_result = result
 
-        self.plot_waveform(
-            result
-        )
-
-        self.plot_fft(
-            result
-        )
-
-        self.plot_psd(
-            result
-        )
-
-        self.plot_waterfall(
-            result
-        )
-
-        self.plot_constellation(
-            result
-        )
+        self.plot_waveform(result)
+        self.plot_fft(result)
+        self.plot_psd(result)
+        self.plot_waterfall(result)
+        self.plot_constellation(result)
 
     # ============================================================
     # 1. WAVEFORM
@@ -297,6 +391,7 @@ class SignalAnalysisWidget(QWidget):
         self.waveform_figure.clear()
 
         ax = self.waveform_figure.add_subplot(111)
+        self._style_axes(ax)
 
         signal = np.asarray(
             result["samples"]
@@ -356,7 +451,7 @@ class SignalAnalysisWidget(QWidget):
 
         ax.legend()
 
-        self._safe_tight_layout(self.waveform_figure)
+        self.waveform_figure.subplots_adjust(left=0.075, right=0.985, bottom=0.14, top=0.86)
 
         self.waveform_canvas.draw()
 
@@ -369,6 +464,7 @@ class SignalAnalysisWidget(QWidget):
         self.fft_figure.clear()
 
         ax = self.fft_figure.add_subplot(111)
+        self._style_axes(ax)
 
         frequencies = result.get(
             "fft_frequency"
@@ -443,7 +539,7 @@ class SignalAnalysisWidget(QWidget):
             alpha=0.3
         )
 
-        self._safe_tight_layout(self.fft_figure)
+        self.fft_figure.subplots_adjust(left=0.075, right=0.985, bottom=0.14, top=0.86)
 
         self.fft_canvas.draw()
 
@@ -456,6 +552,7 @@ class SignalAnalysisWidget(QWidget):
         self.psd_figure.clear()
 
         ax = self.psd_figure.add_subplot(111)
+        self._style_axes(ax)
 
         frequencies = result.get(
             "psd_frequency"
@@ -528,7 +625,7 @@ class SignalAnalysisWidget(QWidget):
             alpha=0.3
         )
 
-        self._safe_tight_layout(self.psd_figure)
+        self.psd_figure.subplots_adjust(left=0.075, right=0.985, bottom=0.14, top=0.86)
 
         self.psd_canvas.draw()
 
@@ -541,6 +638,7 @@ class SignalAnalysisWidget(QWidget):
         self.waterfall_figure.clear()
 
         ax = self.waterfall_figure.add_subplot(111)
+        self._style_axes(ax)
 
         signal = np.asarray(
             result["samples"]
@@ -622,14 +720,22 @@ class SignalAnalysisWidget(QWidget):
             shading="auto"
         )
 
-        self.waterfall_figure.colorbar(
+        colorbar = self.waterfall_figure.colorbar(
             mesh,
             ax=ax,
             label="Magnitude (dB)"
         )
 
+        colorbar.ax.tick_params(colors="#cccccc")
+        colorbar.set_label("Magnitude (dB)", color="#cccccc")
+
+        for spine in colorbar.ax.spines.values():
+            spine.set_color("#555555")
+
         ax.set_title(
-            "Waterfall / Spectrogram"
+            "Waterfall / Spectrogram",
+            color="#e0e0e0",
+            pad=10,
         )
 
         ax.set_xlabel(
@@ -640,7 +746,7 @@ class SignalAnalysisWidget(QWidget):
             "Frequency (Hz)"
         )
 
-        self._safe_tight_layout(self.waterfall_figure)
+        self.waterfall_figure.subplots_adjust(left=0.075, right=0.91, bottom=0.13, top=0.84)
 
         self.waterfall_canvas.draw()
 
@@ -652,17 +758,33 @@ class SignalAnalysisWidget(QWidget):
 
         from param_estimation.modulation_classifier import (
             get_ideal_constellation,
-            MODULATION_TYPES,
             MODULATION_INFO,
         )
 
         self.constellation_figure.clear()
+        self._style_figure(self.constellation_figure)
 
         signal = np.asarray(result["samples"])
 
         if len(signal) == 0:
-            ax = self.constellation_figure.add_subplot(111)
-            ax.set_title("I/Q Constellation Diagram")
+            ax = self.constellation_figure.add_axes(
+                [0.30, 0.24, 0.40, 0.55]
+            )
+            self._style_axes(ax)
+            ax.set_title(
+                "I/Q Constellation Diagram",
+                color="#e0e0e0",
+                pad=10,
+            )
+            ax.text(
+                0.5,
+                0.5,
+                "No signal samples available",
+                ha="center",
+                va="center",
+                color="#cccccc",
+                transform=ax.transAxes,
+            )
             self.constellation_canvas.draw()
             return
 
@@ -679,8 +801,8 @@ class SignalAnalysisWidget(QWidget):
         i_data = np.real(signal)
         q_data = np.imag(signal)
 
-        # Normalize
         amplitude = np.max(np.abs(signal))
+
         if amplitude > 0:
             i_data = i_data / amplitude
             q_data = q_data / amplitude
@@ -689,121 +811,290 @@ class SignalAnalysisWidget(QWidget):
         # MODULATION INFO
         # --------------------------------------------------------
 
-        detected_type = result.get(
-            "detected_modulation",
-            result.get("modulation", "Unknown")
+        pipeline_modulation = result.get("pipeline_modulation")
+        pipeline_confidence = result.get("pipeline_confidence")
+
+        visual_modulation = result.get(
+            "constellation_modulation",
+            result.get(
+                "detected_modulation",
+                result.get("modulation", "Unknown")
+            )
+        )
+        visual_confidence = result.get(
+            "constellation_confidence",
+            result.get(
+                "modulation_confidence",
+                result.get("confidence", 0.0)
+            )
         )
 
-        confidence = result.get(
-            "modulation_confidence",
-            result.get("confidence", 0.0)
-        )
+        def _confidence_percent(value):
+            if isinstance(value, (int, float, np.number)):
+                value = float(value)
+                if value <= 1:
+                    value *= 100
+                return int(round(value))
+            return 0
 
-        if isinstance(confidence, (int, float)):
-            if confidence <= 1:
-                confidence_pct = int(round(confidence * 100))
-            else:
-                confidence_pct = int(round(confidence))
+        pipeline_pct = _confidence_percent(pipeline_confidence)
+        visual_pct = _confidence_percent(visual_confidence)
+
+        # --------------------------------------------------------
+        # COMPACT FIXED LAYOUT
+        #
+        # The canvas remains 1000 x 700 px, matching the original
+        # figure size. Nothing is enlarged to create scrolling.
+        #
+        # If the user's visible tab is smaller than 1000 x 700,
+        # QScrollArea automatically shows the appropriate scrollbar.
+        # --------------------------------------------------------
+
+        if pipeline_modulation:
+            title = (
+                f"I/Q Constellation — "
+                f"ML Pipeline: {pipeline_modulation} "
+                f"({pipeline_pct}% confidence)"
+            )
+
+            if (
+                visual_modulation
+                and visual_modulation != pipeline_modulation
+            ):
+                title += (
+                    f"  |  Visual estimate: {visual_modulation} "
+                    f"({visual_pct}%)"
+                )
+        elif visual_modulation != "Unknown":
+            title = (
+                f"I/Q Constellation — "
+                f"Visual estimate: {visual_modulation} "
+                f"({visual_pct}% confidence)"
+            )
         else:
-            confidence_pct = 0
+            title = "I/Q Constellation"
 
-        # --------------------------------------------------------
-        # LAYOUT: main plot on top, 5 reference thumbnails below
-        # --------------------------------------------------------
-
-        import matplotlib.gridspec as gridspec
-
-        gs = gridspec.GridSpec(
-            2, 5,
-            figure=self.constellation_figure,
-            height_ratios=[3, 1],
-            hspace=0.45,
-            wspace=0.40,
+        self.constellation_figure.suptitle(
+            title,
+            fontsize=14,
+            fontweight="bold",
+            color="#e0e0e0",
+            y=0.965,
         )
 
         # ========================================================
-        # MAIN CONSTELLATION DIAGRAM (top, spans all 5 columns)
+        # MAIN I/Q CONSTELLATION
         # ========================================================
 
-        ax_main = self.constellation_figure.add_subplot(gs[0, :])
+        # Compact centered plot.
+        ax_main = self.constellation_figure.add_axes(
+            [0.37, 0.43, 0.26, 0.42]
+        )
+        self._style_axes(ax_main)
 
-        # Signal scatter
         ax_main.scatter(
-            i_data, q_data,
-            s=10, alpha=0.5, color="#4fc3f7",
-            label="Signal", zorder=2,
+            i_data,
+            q_data,
+            s=9,
+            alpha=0.45,
+            color="#4fc3f7",
+            label="Signal",
+            zorder=2,
+            rasterized=True,
         )
 
-        # Overlay ideal constellation markers
-        ideal_points = get_ideal_constellation(detected_type)
+        ideal_points = get_ideal_constellation(visual_modulation)
+
         if ideal_points is not None:
             ax_main.scatter(
                 np.real(ideal_points),
                 np.imag(ideal_points),
-                s=200, marker="X", color="#e53935",
-                linewidths=1.5, edgecolors="#b71c1c",
-                label=f"Ideal {detected_type}", zorder=3,
+                s=110,
+                marker="X",
+                color="#e53935",
+                linewidths=1.0,
+                edgecolors="#b71c1c",
+                label=f"Visual ideal {visual_modulation}",
+                zorder=3,
             )
 
-        # Reference axes
-        ax_main.axhline(0, linewidth=0.6, color="#888888", zorder=1)
-        ax_main.axvline(0, linewidth=0.6, color="#888888", zorder=1)
+        ax_main.axhline(
+            0,
+            linewidth=0.7,
+            color="#777777",
+            zorder=1,
+        )
+        ax_main.axvline(
+            0,
+            linewidth=0.7,
+            color="#777777",
+            zorder=1,
+        )
 
-        # Title
-        title_str = "5. Constellation Diagram"
-        if detected_type != "Unknown":
-            title_str += (
-                f"\nDetected: {detected_type}"
-                f" (Confidence: {confidence_pct}%)"
-            )
+        max_abs = max(
+            1.15,
+            float(
+                max(
+                    np.max(np.abs(i_data)),
+                    np.max(np.abs(q_data)),
+                )
+            ) * 1.10,
+        )
 
-        ax_main.set_title(title_str, fontsize=13, fontweight="bold")
-        ax_main.set_xlabel("I (In-phase)")
-        ax_main.set_ylabel("Q (Quadrature)")
-        ax_main.grid(True, alpha=0.3)
+        ax_main.set_xlim(-max_abs, max_abs)
+        ax_main.set_ylim(-max_abs, max_abs)
         ax_main.set_aspect("equal", adjustable="box")
-        ax_main.legend(loc="upper right", fontsize=8, framealpha=0.7)
+
+        ax_main.set_xlabel(
+            "I (In-phase)",
+            color="#cccccc",
+            labelpad=4,
+            fontsize=9,
+        )
+
+        ax_main.set_ylabel(
+            "Q (Quadrature)",
+            color="#cccccc",
+            labelpad=4,
+            fontsize=9,
+        )
+
+        ax_main.tick_params(
+            colors="#cccccc",
+            labelsize=8,
+            pad=2,
+        )
+
+        ax_main.grid(
+            True,
+            alpha=0.22,
+            linewidth=0.6,
+            color="#888888",
+        )
+
+        legend = ax_main.legend(
+            loc="upper right",
+            fontsize=7,
+            framealpha=0.80,
+            borderpad=0.4,
+            handlelength=1.2,
+        )
+
+        if legend is not None:
+            legend.get_frame().set_facecolor("#2b2b2b")
+            legend.get_frame().set_edgecolor("#666666")
+
+            for legend_text in legend.get_texts():
+                legend_text.set_color("#e0e0e0")
 
         # ========================================================
-        # REFERENCE CONSTELLATION THUMBNAILS (bottom row)
+        # REFERENCE CONSTELLATIONS
         # ========================================================
 
-        ref_types = ["BPSK", "QPSK", "8-PSK", "16-QAM", "64-QAM"]
-        ref_colors = ["#42a5f5", "#ab47bc", "#ff9800", "#e91e63", "#26a69a"]
+        ref_types = [
+            "BPSK",
+            "QPSK",
+            "8-PSK",
+            "16-QAM",
+            "64-QAM",
+        ]
+
+        ref_colors = [
+            "#42a5f5",
+            "#ab47bc",
+            "#ff9800",
+            "#e91e63",
+            "#26a69a",
+        ]
+
+        # Five compact, evenly spaced reference plots.
+        centers = [
+            0.10,
+            0.30,
+            0.50,
+            0.70,
+            0.90,
+        ]
 
         for col, mod_name in enumerate(ref_types):
-            ax_ref = self.constellation_figure.add_subplot(gs[1, col])
+
+            ax_ref = self.constellation_figure.add_axes(
+                [
+                    centers[col] - 0.055,
+                    0.08,
+                    0.11,
+                    0.20,
+                ]
+            )
+
+            self._style_axes(ax_ref)
 
             pts = get_ideal_constellation(mod_name)
+
             if pts is not None:
                 ax_ref.scatter(
-                    np.real(pts), np.imag(pts),
-                    s=28, color=ref_colors[col], zorder=2,
+                    np.real(pts),
+                    np.imag(pts),
+                    s=25,
+                    color=ref_colors[col],
+                    zorder=2,
                 )
 
-            info = MODULATION_INFO.get(mod_name, {})
-            bps = info.get("bits_per_symbol", "?")
+            info = MODULATION_INFO.get(
+                mod_name,
+                {}
+            )
+
+            bps = info.get(
+                "bits_per_symbol",
+                "?"
+            )
 
             ax_ref.set_title(
                 f"{mod_name}\n{bps} bits/symbol",
-                fontsize=8, fontweight="bold",
+                fontsize=8,
+                fontweight="bold",
+                color="#e0e0e0",
+                pad=5,
             )
 
             ax_ref.set_xlim(-1.3, 1.3)
             ax_ref.set_ylim(-1.3, 1.3)
-            ax_ref.set_aspect("equal", adjustable="box")
-            ax_ref.tick_params(labelsize=6)
+            ax_ref.set_aspect(
+                "equal",
+                adjustable="box"
+            )
 
-            # Highlight the detected modulation with a green border
-            if mod_name == detected_type:
+            ax_ref.tick_params(
+                labelsize=6,
+                colors="#aaaaaa",
+                pad=1,
+            )
+
+            ax_ref.grid(
+                True,
+                alpha=0.15,
+                linewidth=0.5,
+                color="#888888",
+            )
+
+            selected_modulation = pipeline_modulation or visual_modulation
+
+            if mod_name == selected_modulation:
+
                 for spine in ax_ref.spines.values():
                     spine.set_edgecolor("#4caf50")
-                    spine.set_linewidth(3)
-            else:
-                for spine in ax_ref.spines.values():
-                    spine.set_linewidth(0.5)
+                    spine.set_linewidth(2.5)
 
-        self._safe_tight_layout(self.constellation_figure)
+            else:
+
+                for spine in ax_ref.spines.values():
+                    spine.set_edgecolor("#555555")
+                    spine.set_linewidth(0.7)
+
+        # No tight_layout() here.
+        # All positions are deliberately fixed so the plots cannot
+        # overlap. QScrollArea handles any lack of screen space.
         self.constellation_canvas.draw()
 
     # ============================================================

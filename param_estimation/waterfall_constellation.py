@@ -327,7 +327,8 @@ if __name__ == "__main__":
     print(
         "Constellation points:",
         len(result["constellation_i"])
-    )"""
+    )
+"""
 SIH 2026 - Waterfall and Constellation Analysis
 
 Responsibilities:
